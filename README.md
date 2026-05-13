@@ -2,6 +2,10 @@
 
 A JWT-authenticated movie watchlist app. Search movies via the OMDb API, save them to your private list, and track your watch status and ratings.
 
+**Live app:** https://reel-list-wdfm.onrender.com
+
+> The backend runs on Render's free tier and spins down after 15 minutes of inactivity. The first request after a sleep can take 30–50 seconds to wake it up; everything is fast after that.
+
 ## Features
 
 - Sign up / log in with JWT authentication
@@ -9,7 +13,7 @@ A JWT-authenticated movie watchlist app. Search movies via the OMDb API, save th
 - Save movies to a personal, private watchlist
 - Mark movies as "Want to watch" or "Watched"
 - Rate watched movies on a 5-star scale
-- Per-user data isolation — every watchlist item belongs to exactly one user
+- Per-user data isolation, every watchlist item belongs to exactly one user
 - Persistent storage so your watchlist survives logouts and page refreshes
 
 ## Tech Stack
@@ -19,7 +23,7 @@ A JWT-authenticated movie watchlist app. Search movies via the OMDb API, save th
 - SQLAlchemy (ORM) and Flask-Migrate (Alembic) for the database
 - Flask-JWT-Extended for token-based auth
 - Werkzeug for password hashing
-- SQLite locally, ready for Postgres in production
+- SQLite locally, PostgreSQL in production
 
 **Frontend**
 - React (Create React App)
@@ -29,6 +33,11 @@ A JWT-authenticated movie watchlist app. Search movies via the OMDb API, save th
 
 **External**
 - [OMDb API](https://www.omdbapi.com/) for movie search and details
+
+**Hosting**
+- Frontend: Render Static Site
+- Backend: Render Web Service
+- Database: Render PostgreSQL
 
 ## Project Structure
 
@@ -46,6 +55,7 @@ movie_tracker/
     └── src/
         ├── App.js           # Router setup
         ├── App.css          # All styles
+        ├── config.js        # Reads REACT_APP_API_URL for the backend address
         ├── components/
         │   └── Navbar.js
         └── pages/
@@ -97,7 +107,21 @@ npm install
 npm start
 ```
 
-Frontend serves at `http://localhost:3000` and talks to the Flask backend on port 5555.
+Frontend serves at `http://localhost:3000` and talks to the Flask backend on port 5555 by default. To point at a different backend (such as the deployed one), set `REACT_APP_API_URL` in `client/.env` before starting:
+
+```
+REACT_APP_API_URL=https://movietracker-90z5.onrender.com
+```
+
+## Deployment
+
+The app is deployed on Render in three pieces:
+
+- A Static Site for the React frontend (`client/`), built with `npm run build` and served from `client/build`. The frontend reads `REACT_APP_API_URL` to find the backend.
+- A Web Service for the Flask backend (`server/`), running gunicorn against `app:app`. Every deploy runs `flask db upgrade` so the database schema stays in sync with the models.
+- A managed PostgreSQL database, with `DATABASE_URL` injected into the backend service's environment.
+
+CORS is set to allow all origins for now. The backend rewrites Render's `postgres://` connection scheme to `postgresql://` so SQLAlchemy can connect.
 
 ## API Routes
 
