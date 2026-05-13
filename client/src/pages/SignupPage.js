@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import API_URL from "../config";
 
 function SignupPage() {
   const [username, setUsername] = useState("");
@@ -19,7 +20,7 @@ function SignupPage() {
     }
     setError(null);
 
-    fetch("http://127.0.0.1:5555/auth/register", {
+    fetch(`${API_URL}/auth/register`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

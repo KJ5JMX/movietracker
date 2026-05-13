@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import API_URL from "../config";
 
 function DashboardPage() {
   const [query, setQuery] = useState("");
@@ -20,7 +21,7 @@ function DashboardPage() {
 
   function fetchWatchlist() {
     const token = localStorage.getItem("token");
-    authFetch("http://127.0.0.1:5555/watchlist/", {
+    authFetch(`${API_URL}/watchlist/`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((data) => {
@@ -44,10 +45,9 @@ function DashboardPage() {
     }
     const timer = setTimeout(() => {
       const token = localStorage.getItem("token");
-      authFetch(
-        `http://127.0.0.1:5555/movies/search?q=${encodeURIComponent(query)}`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      )
+      authFetch(`${API_URL}/movies/search?q=${encodeURIComponent(query)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
         .then((data) => {
           if (data) setSearchResults(data);
         })
@@ -60,7 +60,7 @@ function DashboardPage() {
 
   const handleSelectSearchResult = (imdbId) => {
     const token = localStorage.getItem("token");
-    authFetch(`http://127.0.0.1:5555/movies/${imdbId}`, {
+    authFetch(`${API_URL}/movies/${imdbId}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((data) => {
@@ -78,7 +78,7 @@ function DashboardPage() {
 
   const handleAddToWatchlist = () => {
     const token = localStorage.getItem("token");
-    authFetch("http://127.0.0.1:5555/watchlist/", {
+    authFetch(`${API_URL}/watchlist/`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -108,7 +108,7 @@ function DashboardPage() {
 
   const handleUpdateItem = (updates) => {
     const token = localStorage.getItem("token");
-    authFetch(`http://127.0.0.1:5555/watchlist/${selectedMovie.id}`, {
+    authFetch(`${API_URL}/watchlist/${selectedMovie.id}`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
@@ -130,7 +130,7 @@ function DashboardPage() {
 
   const handleDelete = () => {
     const token = localStorage.getItem("token");
-    authFetch(`http://127.0.0.1:5555/watchlist/${selectedMovie.id}`, {
+    authFetch(`${API_URL}/watchlist/${selectedMovie.id}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -207,7 +207,9 @@ function DashboardPage() {
                 <li
                   key={item.id}
                   className={`watchlist-item ${
-                    selectedMovie && selectedMovie.id === item.id ? "selected" : ""
+                    selectedMovie && selectedMovie.id === item.id
+                      ? "selected"
+                      : ""
                   }`}
                   onClick={() => setSelectedMovie(item)}
                 >

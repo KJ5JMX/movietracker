@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import API_URL from "../config";
 
 function LoginPage() {
   const [username, setUsername] = useState("");
@@ -19,7 +20,7 @@ function LoginPage() {
     }
     setError(null);
 
-    fetch("http://127.0.0.1:5555/auth/login", {
+    fetch(`${API_URL}/auth/login`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
