@@ -320,6 +320,44 @@ function DashboardPage() {
                           <option value="5">★★★★★</option>
                         </select>
                       </label>
+                      <div style={{ width: "100%" }}>
+                        <span
+                          style={{
+                            fontWeight: 600,
+                            color: "#3F4540",
+                            display: "block",
+                            marginBottom: "0.25rem",
+                          }}
+                        >
+                          Notes:
+                        </span>
+                        <textarea
+                          value={selectedMovie.notes || ""}
+                          onChange={(e) =>
+                            setSelectedMovie({
+                              ...selectedMovie,
+                              notes: e.target.value,
+                            })
+                          }
+                          onBlur={() =>
+                            handleUpdateItem({
+                              notes: selectedMovie.notes || null,
+                            })
+                          }
+                          placeholder="Add your thoughts about this movie..."
+                          rows={3}
+                          style={{
+                            width: "100%",
+                            padding: "0.5rem",
+                            borderRadius: "4px",
+                            border: "1px solid #ddd",
+                            fontFamily: "inherit",
+                            fontSize: "0.95rem",
+                            resize: "vertical",
+                          }}
+                        />
+                      </div>
+
                       <button className="btn-danger" onClick={handleDelete}>
                         Delete from Watchlist
                       </button>
