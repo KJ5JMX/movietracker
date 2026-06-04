@@ -22,6 +22,10 @@ dist/
 *.sqlite3
 instance/
 
+# Local-only catch-up / deploy docs
+CLAUDE.md
+BackCLAUDE.md
+
 # IDE / OS
 .vscode/
 .idea/

@@ -1,0 +1,34 @@
+[Unit]
+Description=Cued Up backend (Flask via gunicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=REPLACE_WITH_VM_USER
+Group=REPLACE_WITH_VM_USER
+
+# Project lives here on the VM. Adjust to wherever you cloned it.
+WorkingDirectory=/home/REPLACE_WITH_VM_USER/movie_tracker/server
+
+# Secrets (JWT_SECRET_KEY, SECRET_KEY, OMDB_API_KEY, optional DATABASE_URL, etc.)
+EnvironmentFile=/home/REPLACE_WITH_VM_USER/movie_tracker/server/.env
+
+# Launch gunicorn directly from the pipenv-managed virtualenv so we don't pay
+# pipenv's wrapper cost on every restart. Run `pipenv --venv` once on the VM
+# to find the path, then drop it in below.
+ExecStart=REPLACE_WITH_PIPENV_VENV_PATH/bin/gunicorn \
+    --workers 4 \
+    --bind 127.0.0.1:5555 \
+    --access-logfile - \
+    --error-logfile - \
+    app:app
+
+Restart=always
+RestartSec=5
+
+# Send stdout/stderr to journald so `journalctl -u cuedup-api -f` tails the logs.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
