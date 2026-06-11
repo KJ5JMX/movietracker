@@ -106,6 +106,16 @@ def roll():
     if err:
         return jsonify({"message": err}), 400
 
+    # Solo Movie Night is free — roll against your own list all you want.
+    # Bringing friends into the roll (the social payoff) is Pro.
+    if len(user_ids) > 1:
+        me = User.query.get(me_id)
+        if not me or not me.is_pro:
+            return jsonify({
+                "message": "Movie Night with friends requires Pro",
+                "code": "pro_required",
+            }), 402
+
     media_type = data.get("media_type", "movie")
     if media_type not in {"movie", "tv", "any"}:
         return jsonify({"message": f"Invalid media_type: {media_type}"}), 400
@@ -250,21 +260,20 @@ def create_session():
     if not me:
         return jsonify({"message": "User not found"}), 404
 
-    # Hosting Movie Nights is a Pro feature. Free users can roll the picker
-    # (it's harmless) and they can join sessions they're invited to — but
-    # initiating a session requires Pro.
-    if not me.is_pro:
-        return jsonify({
-            "message": "Hosting Movie Night requires Pro",
-            "code": "pro_required",
-        }), 402
-
     data = request.get_json() or {}
 
     participant_ids = data.get("participant_ids") or []
     user_ids, err = _validate_participants(me_id, participant_ids)
     if err:
         return jsonify({"message": err}), 400
+
+    # Same line as /roll: a solo session (tracking your own pick + rating)
+    # is free; a session WITH friends is the Pro feature.
+    if len(user_ids) > 1 and not me.is_pro:
+        return jsonify({
+            "message": "Movie Night with friends requires Pro",
+            "code": "pro_required",
+        }), 402
 
     imdb_id = data.get("picked_imdb_id")
     title = data.get("picked_title")
