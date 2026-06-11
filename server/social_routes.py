@@ -256,6 +256,114 @@ def remove_friend(friendship_id):
 
 
 # ---------------------------------------------------------------------------
+# Friend activity — everything me and one friend share, for the tappable
+# username view in the app.
+# ---------------------------------------------------------------------------
+
+@social_bp.route("/friends/<int:user_id>/activity", methods=["GET"])
+@jwt_required()
+def friend_activity(user_id):
+    me_id = int(get_jwt_identity())
+    friend = User.query.get(user_id)
+    if not friend:
+        return jsonify({"message": "User not found"}), 404
+    if not are_friends(me_id, user_id):
+        return jsonify({"message": "You're not friends with this user"}), 403
+
+    # Recs + reviews exchanged, both directions
+    recs_from_them = (
+        Recommendation.query
+        .filter_by(from_user_id=user_id, to_user_id=me_id)
+        .order_by(Recommendation.created_at.desc()).limit(50).all()
+    )
+    recs_to_them = (
+        Recommendation.query
+        .filter_by(from_user_id=me_id, to_user_id=user_id)
+        .order_by(Recommendation.created_at.desc()).limit(50).all()
+    )
+    reviews_from_them = (
+        ReviewShare.query
+        .filter_by(from_user_id=user_id, to_user_id=me_id)
+        .order_by(ReviewShare.created_at.desc()).limit(50).all()
+    )
+    reviews_to_them = (
+        ReviewShare.query
+        .filter_by(from_user_id=me_id, to_user_id=user_id)
+        .order_by(ReviewShare.created_at.desc()).limit(50).all()
+    )
+
+    # Movie nights where BOTH of us were participants
+    from models import MovieNightSession, MovieNightParticipant
+    my_sessions = {
+        p.session_id
+        for p in MovieNightParticipant.query.filter_by(user_id=me_id).all()
+    }
+    shared_parts = (
+        MovieNightParticipant.query
+        .filter(
+            MovieNightParticipant.user_id == user_id,
+            MovieNightParticipant.session_id.in_(my_sessions),
+        ).all()
+        if my_sessions else []
+    )
+    nights = []
+    if shared_parts:
+        their_ratings = {p.session_id: p.rating for p in shared_parts}
+        my_parts = MovieNightParticipant.query.filter(
+            MovieNightParticipant.user_id == me_id,
+            MovieNightParticipant.session_id.in_(list(their_ratings.keys())),
+        ).all()
+        my_ratings = {p.session_id: p.rating for p in my_parts}
+        sessions = (
+            MovieNightSession.query
+            .filter(MovieNightSession.id.in_(list(their_ratings.keys())))
+            .order_by(MovieNightSession.created_at.desc()).limit(50).all()
+        )
+        nights = [{
+            "id": s.id,
+            "title": s.picked_title,
+            "year": s.picked_year,
+            "poster": s.picked_poster,
+            "media_type": s.picked_media_type,
+            "status": s.status,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "my_rating": my_ratings.get(s.id),
+            "their_rating": their_ratings.get(s.id),
+        } for s in sessions]
+
+    # Their recent additions — but a 'private' friend's shelf stays private.
+    # Mutual exchanges (recs/reviews/nights) always show: both parties own those.
+    is_private = friend.privacy_mode == "private"
+    recent_items = []
+    if not is_private:
+        items = (
+            WatchlistItem.query
+            .filter_by(user_id=user_id)
+            .order_by(WatchlistItem.id.desc()).limit(20).all()
+        )
+        recent_items = [{
+            "imdb_id": i.imdb_id,
+            "title": i.title,
+            "year": i.year,
+            "poster": i.poster,
+            "media_type": i.media_type,
+            "watch_status": i.watch_status,
+            "rating": i.rating,
+        } for i in items]
+
+    return jsonify({
+        "user": user_summary(friend),
+        "is_private": is_private,
+        "recs_from_them": [rec_to_dict(r) for r in recs_from_them],
+        "recs_to_them": [rec_to_dict(r) for r in recs_to_them],
+        "reviews_from_them": [review_to_dict(rv) for rv in reviews_from_them],
+        "reviews_to_them": [review_to_dict(rv) for rv in reviews_to_them],
+        "nights_together": nights,
+        "recent_items": recent_items,
+    }), 200
+
+
+# ---------------------------------------------------------------------------
 # Recommendations
 # ---------------------------------------------------------------------------
 

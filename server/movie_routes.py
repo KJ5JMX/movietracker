@@ -29,6 +29,49 @@ def _na_to_none(value):
     return value
 
 
+def _query_variants(query):
+    """Forgiving-search fallbacks, tried in order until OMDb returns results.
+
+    OMDb's search is rigid about punctuation: "bobs burgers" misses
+    "Bob's Burgers" and vice versa. Variants generated:
+      1. the query as typed
+      2. punctuation stripped            (bob's -> bobs)
+      3. possessive repair, per word     (bobs -> bob's)
+    Capped at 5 variants; each one only costs an extra OMDb call when the
+    previous returned nothing.
+    """
+    q = (query or "").strip()
+    if not q:
+        return []
+    variants = [q]
+
+    stripped = re.sub(r"[^\w\s]", "", q)
+    stripped = re.sub(r"\s+", " ", stripped).strip()
+    if stripped and stripped.lower() != q.lower():
+        variants.append(stripped)
+
+    words = (stripped or q).split()
+    for i, w in enumerate(words):
+        if len(variants) >= 5:
+            break
+        if len(w) > 2 and w.lower().endswith("s") and not w.lower().endswith("ss"):
+            repaired = list(words)
+            repaired[i] = w[:-1] + "'s"
+            candidate = " ".join(repaired)
+            if candidate.lower() not in [v.lower() for v in variants]:
+                variants.append(candidate)
+    return variants
+
+
+def _omdb_search_forgiving(query, omdb_type, default_media_type):
+    """_omdb_search with punctuation/possessive fallbacks on empty results."""
+    for variant in _query_variants(query):
+        results = _omdb_search(variant, omdb_type, default_media_type)
+        if results:
+            return results
+    return []
+
+
 def _omdb_search(query, omdb_type, default_media_type):
     """Run a single OMDb search. Returns normalized result dicts (movie + series only)."""
     params = {"apikey": Config.OMDB_API_KEY, "s": query}
@@ -80,7 +123,7 @@ def search_movies():
             OPEN_LIBRARY_SEARCH_URL,
         )
 
-        movies_results = _omdb_search(query, None, "movie")
+        movies_results = _omdb_search_forgiving(query, None, "movie")
 
         songs_results = []
         try:
@@ -116,9 +159,9 @@ def search_movies():
             _interleave_results(movies_results, songs_results, books_results)
         ), 200
 
-    # Single-type search: just OMDb
+    # Single-type search: just OMDb (with punctuation-forgiving fallbacks)
     omdb_type = OMDB_TYPE_MAP[media_type]
-    return jsonify(_omdb_search(query, omdb_type, media_type)), 200
+    return jsonify(_omdb_search_forgiving(query, omdb_type, media_type)), 200
 
 
 def _interleave_results(*lists):
@@ -178,6 +221,15 @@ def _omdb_search_top(query, omdb_type=None, limit=3):
     return candidates
 
 
+def _omdb_search_top_forgiving(query, omdb_type=None, limit=3):
+    """_omdb_search_top with the same punctuation fallbacks as live search."""
+    for variant in _query_variants(query):
+        results = _omdb_search_top(variant, omdb_type=omdb_type, limit=limit)
+        if results:
+            return results
+    return []
+
+
 @movie_bp.route("/import", methods=["POST"])
 @jwt_required()
 def import_titles():
@@ -217,7 +269,9 @@ def import_titles():
         with ThreadPoolExecutor(max_workers=5) as pool:
             candidate_lists = list(
                 pool.map(
-                    lambda e: _omdb_search_top(e["query"], omdb_type=omdb_type, limit=3),
+                    lambda e: _omdb_search_top_forgiving(
+                        e["query"], omdb_type=omdb_type, limit=3
+                    ),
                     queries,
                 )
             )
