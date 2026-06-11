@@ -133,11 +133,11 @@ def verify_receipt():
 
     txn, expires_ms = _latest_pro_transaction(data)
     if not txn:
-        return jsonify({"message": "No Cued Up Pro subscription in this receipt"}), 400
+        return jsonify({"message": "No ShelfMates Pro subscription in this receipt"}), 400
 
     original_txn_id = txn.get("original_transaction_id")
 
-    # One Apple subscription unlocks exactly one Cued Up account. If this
+    # One Apple subscription unlocks exactly one ShelfMates account. If this
     # subscription is already attached to someone else, refuse — otherwise a
     # single $1.99 sub could be restored onto unlimited accounts.
     if original_txn_id:
