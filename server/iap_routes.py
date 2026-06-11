@@ -155,8 +155,11 @@ def verify_receipt():
     now = datetime.utcnow()
 
     if expires_at > now:
+        # Comp (founding testers) is permanent: a real subscription never
+        # overwrites it, so a later lapse can't silently demote them to free.
         is_trial = (txn.get("is_trial_period") == "true")
-        user.pro_status = "trial" if is_trial else "paid"
+        if user.pro_status != "comp":
+            user.pro_status = "trial" if is_trial else "paid"
         user.pro_expires_at = expires_at
         user.apple_original_transaction_id = original_txn_id
     else:
