@@ -10,11 +10,11 @@ echo "→ Pulling latest from git..."
 cd "$REPO_DIR"
 git pull --ff-only
 
-echo "→ Building image..."
-docker compose build
-
-echo "→ Restarting container (runs migrations on start)..."
-docker compose up -d
+echo "→ Building image and (re)starting container (migrations run on start)..."
+# `up --build --wait` rebuilds the image, recreates the container if the image
+# changed, runs it detached, and blocks until the healthcheck passes. Compose
+# v5 removed the `-d` flag; `--wait` implies detached and is what replaces it.
+docker compose up --build --wait
 
 echo "→ Status:"
 docker compose ps
