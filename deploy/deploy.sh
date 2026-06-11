@@ -1,27 +1,24 @@
 #!/bin/bash
-# One-shot deploy: pull latest, install any new deps, run migrations, restart service.
-# Run this on the Ubuntu VM after pushing changes to git.
+# One-shot deploy: pull latest, rebuild the container, restart it.
+# Migrations run automatically inside the container's entrypoint.
+# Run this on the Ubuntu box after pushing changes to git.
 set -euo pipefail
 
-# Adjust if your checkout lives somewhere else.
 REPO_DIR="${REPO_DIR:-$HOME/movie_tracker}"
-SERVICE_NAME="${SERVICE_NAME:-cuedup-api}"
 
 echo "→ Pulling latest from git..."
 cd "$REPO_DIR"
 git pull --ff-only
 
-echo "→ Installing dependencies..."
-cd "$REPO_DIR/server"
-pipenv install --deploy
+echo "→ Building image..."
+docker compose build
 
-echo "→ Running database migrations..."
-pipenv run flask db upgrade
-
-echo "→ Restarting $SERVICE_NAME..."
-sudo systemctl restart "$SERVICE_NAME"
+echo "→ Restarting container (runs migrations on start)..."
+docker compose up -d
 
 echo "→ Status:"
-sudo systemctl status "$SERVICE_NAME" --no-pager --lines=5
+docker compose ps
+echo "→ Recent logs:"
+docker compose logs --tail=20 api
 
 echo "✓ Deployed."

@@ -284,7 +284,12 @@ def send_rec():
     if not (to_user_id and imdb_id and title):
         return jsonify({"message": "to_user_id, imdb_id, and title required"}), 400
 
-    if not are_friends(me_id, int(to_user_id)):
+    try:
+        to_user_id = int(to_user_id)
+    except (TypeError, ValueError):
+        return jsonify({"message": "to_user_id must be an integer"}), 400
+
+    if not are_friends(me_id, to_user_id):
         return jsonify({"message": "Can only recommend to friends"}), 403
 
     media_type = data.get("media_type", "movie")
@@ -293,7 +298,7 @@ def send_rec():
 
     rec = Recommendation(
         from_user_id=me_id,
-        to_user_id=int(to_user_id),
+        to_user_id=to_user_id,
         imdb_id=imdb_id,
         media_type=media_type,
         title=title,
@@ -396,8 +401,27 @@ def send_review():
     if not (to_user_id and imdb_id and title):
         return jsonify({"message": "to_user_id, imdb_id, and title required"}), 400
 
-    if not are_friends(me_id, int(to_user_id)):
+    try:
+        to_user_id = int(to_user_id)
+    except (TypeError, ValueError):
+        return jsonify({"message": "to_user_id must be an integer"}), 400
+
+    if not are_friends(me_id, to_user_id):
         return jsonify({"message": "Can only share with friends"}), 403
+
+    # rec_id is optional; only accept it if it points at a real rec that was
+    # actually sent to me. Anything else (bad id, someone else's rec) is
+    # silently dropped rather than stored as a dangling/forged link.
+    rec_id = data.get("rec_id")
+    if rec_id is not None:
+        try:
+            rec_id = int(rec_id)
+        except (TypeError, ValueError):
+            rec_id = None
+        else:
+            rec = Recommendation.query.get(rec_id)
+            if not rec or rec.to_user_id != me_id:
+                rec_id = None
 
     rating = data.get("rating")
     if rating is not None:
@@ -410,8 +434,8 @@ def send_review():
 
     review = ReviewShare(
         from_user_id=me_id,
-        to_user_id=int(to_user_id),
-        rec_id=data.get("rec_id"),
+        to_user_id=to_user_id,
+        rec_id=rec_id,
         imdb_id=imdb_id,
         title=title,
         poster=data.get("poster"),

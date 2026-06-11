@@ -16,8 +16,15 @@ EnvironmentFile=/home/REPLACE_WITH_VM_USER/movie_tracker/server/.env
 # Launch gunicorn directly from the pipenv-managed virtualenv so we don't pay
 # pipenv's wrapper cost on every restart. Run `pipenv --venv` once on the VM
 # to find the path, then drop it in below.
+# Threaded workers, not 4 sync processes: most request time is spent waiting
+# on OMDb/iTunes/Open Library, which threads handle fine, and fewer processes
+# means less SQLite write contention. 2x8 = 16 concurrent requests.
+# --timeout 90 covers the slow /movies/import fan-out.
 ExecStart=REPLACE_WITH_PIPENV_VENV_PATH/bin/gunicorn \
-    --workers 4 \
+    --worker-class gthread \
+    --workers 2 \
+    --threads 8 \
+    --timeout 90 \
     --bind 127.0.0.1:5555 \
     --access-logfile - \
     --error-logfile - \

@@ -30,6 +30,12 @@ class User(db.Model):
     pro_status = db.Column(
         db.String, default="free", server_default="free", nullable=False
     )
+    # Subscription bookkeeping, set by /iap/verify-receipt after Apple confirms
+    # a purchase. pro_expires_at lets us lazily downgrade lapsed subscribers
+    # without webhooks; the original transaction id ties an Apple subscription
+    # to exactly one account (prevents one purchase unlocking many accounts).
+    pro_expires_at = db.Column(db.DateTime, nullable=True)
+    apple_original_transaction_id = db.Column(db.String, nullable=True, index=True)
     # Genre preferences — JSON-encoded list of genre strings ("Comedy", "Drama", ...).
     # Drives the discovery feed's filtering. Stored as text to keep this SQLite-safe
     # without needing a JSON column type.

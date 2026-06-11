@@ -167,11 +167,17 @@ def get_watchlist():
 @jwt_required()
 def add_to_watchlist():
     user_id = int(get_jwt_identity())
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
 
     imdb_id = data.get("imdb_id")
     if not imdb_id:
         return jsonify({"message": "imdb_id is required"}), 400
+
+    # title is NOT NULL in the schema; without this check a missing title
+    # surfaces as an IntegrityError 500 instead of a clean 400.
+    title = (data.get("title") or "").strip()
+    if not title:
+        return jsonify({"message": "title is required"}), 400
 
     media_type = data.get("media_type", "movie")
     if media_type not in ALLOWED_MEDIA_TYPES:
@@ -184,7 +190,7 @@ def add_to_watchlist():
         return jsonify({"message": "Item already in your list"}), 400
 
     new_item = WatchlistItem(
-        title=data.get("title"),
+        title=title,
         year=data.get("year"),
         imdb_id=imdb_id,
         movie_type=data.get("movie_type"),
@@ -219,7 +225,7 @@ def update_watchlist_item(item_id):
     if not item:
         return jsonify({"message": "Watchlist item not found"}), 404
 
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     # User-editable fields
     item.watch_status = data.get("watch_status", item.watch_status)
     item.rating = data.get("rating", item.rating)

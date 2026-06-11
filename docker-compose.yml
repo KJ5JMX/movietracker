@@ -1,0 +1,21 @@
+services:
+  api:
+    build: ./server
+    container_name: cuedup-api
+    # Bind to the host's loopback only — the Cloudflare Tunnel reaches it at
+    # localhost:5555, and nothing else on the network can.
+    ports:
+      - "127.0.0.1:5555:5555"
+    env_file:
+      - ./server/.env
+    volumes:
+      # The SQLite database (and its WAL files) live on the HOST here, so
+      # rebuilding the image never touches data. backup.sh reads this path.
+      - ./server/instance:/app/instance
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5555/"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

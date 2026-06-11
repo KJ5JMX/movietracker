@@ -1,5 +1,6 @@
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 import requests
@@ -208,14 +209,24 @@ def import_titles():
         if len(queries) >= IMPORT_MAX_LINES:
             break
 
+    # Fan the OMDb lookups out in parallel. Sequentially, 25 lines x 10s
+    # worst-case timeout could hold a gunicorn thread for 4+ minutes; with 5
+    # concurrent fetches the worst case drops to ~50s. Order is preserved.
     matches = []
-    for entry in queries:
-        candidates = _omdb_search_top(entry["query"], omdb_type=omdb_type, limit=3)
-        matches.append({
-            "query": entry["original"],
-            "cleaned": entry["query"],
-            "candidates": candidates,
-        })
+    if queries:
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            candidate_lists = list(
+                pool.map(
+                    lambda e: _omdb_search_top(e["query"], omdb_type=omdb_type, limit=3),
+                    queries,
+                )
+            )
+        for entry, candidates in zip(queries, candidate_lists):
+            matches.append({
+                "query": entry["original"],
+                "cleaned": entry["query"],
+                "candidates": candidates,
+            })
 
     return jsonify({
         "matches": matches,
@@ -227,12 +238,16 @@ def import_titles():
 @movie_bp.route("/<imdb_id>", methods=["GET"])
 @jwt_required()
 def get_movie(imdb_id):
-    response = requests.get(
-        Config.OMDB_BASE_URL,
-        params={"apikey": Config.OMDB_API_KEY, "i": imdb_id, "plot": "short"},
-        timeout=10,
-    )
-    data = response.json()
+    try:
+        response = requests.get(
+            Config.OMDB_BASE_URL,
+            params={"apikey": Config.OMDB_API_KEY, "i": imdb_id, "plot": "short"},
+            timeout=10,
+        )
+        data = response.json()
+    except (requests.RequestException, ValueError) as e:
+        print(f"[movies] OMDb lookup failed for {imdb_id}: {e}")
+        return jsonify({"message": "Movie lookup failed, try again shortly"}), 502
 
     if data.get("Response") == "False":
         return jsonify({"message": data.get("Error", "Title not found")}), 404

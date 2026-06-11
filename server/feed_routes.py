@@ -65,7 +65,19 @@ def _friend_ids(me_id):
     for f in rows:
         other = f.addressee_id if f.requester_id == me_id else f.requester_id
         ids.add(other)
-    return ids
+    if not ids:
+        return ids
+    # Honor privacy_mode: friends who set "private" opted out of having their
+    # list surfaced in discovery feeds. ("public" and "friends" behave the
+    # same today — there is no public, non-friend surface yet. Movie Night is
+    # unaffected: joining a session is an explicit opt-in.)
+    private_ids = {
+        u.id
+        for u in User.query.with_entities(User.id)
+        .filter(User.id.in_(ids), User.privacy_mode == "private")
+        .all()
+    }
+    return ids - private_ids
 
 
 def _my_imdb_ids(me_id):

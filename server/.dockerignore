@@ -1,0 +1,7 @@
+# Never bake secrets or data into the image. The .env is provided at runtime
+# by docker-compose (env_file), and the database is a bind mount.
+.env
+instance/
+__pycache__/
+*.pyc
+.pytest_cache/
