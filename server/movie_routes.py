@@ -295,7 +295,7 @@ def get_movie(imdb_id):
     try:
         response = requests.get(
             Config.OMDB_BASE_URL,
-            params={"apikey": Config.OMDB_API_KEY, "i": imdb_id, "plot": "short"},
+            params={"apikey": Config.OMDB_API_KEY, "i": imdb_id, "plot": "full"},
             timeout=10,
         )
         data = response.json()
@@ -306,6 +306,20 @@ def get_movie(imdb_id):
     if data.get("Response") == "False":
         return jsonify({"message": data.get("Error", "Title not found")}), 404
 
+    # Everything OMDb knows about a title. Ratings arrive as a list of
+    # {Source, Value} dicts; flatten the non-IMDb ones.
+    ratings = {
+        r.get("Source"): r.get("Value")
+        for r in data.get("Ratings", [])
+        if isinstance(r, dict)
+    }
+
+    runtime_str = _na_to_none(data.get("Runtime"))
+    runtime_minutes = None
+    if runtime_str:
+        digits = "".join(ch for ch in runtime_str if ch.isdigit())
+        runtime_minutes = int(digits) if digits else None
+
     omdb_type = data.get("Type")
     return jsonify({
         "imdb_id": data.get("imdbID"),
@@ -315,13 +329,22 @@ def get_movie(imdb_id):
         "media_type": INTERNAL_TYPE_MAP.get(omdb_type, "movie"),
         "plot": _na_to_none(data.get("Plot")),
         "poster": _na_to_none(data.get("Poster")),
-        "runtime": _na_to_none(data.get("Runtime")),
+        "runtime": runtime_str,
+        "runtime_minutes": runtime_minutes,
         "genre": _na_to_none(data.get("Genre")),
         "director": _na_to_none(data.get("Director")),
+        "writer": _na_to_none(data.get("Writer")),
         "actors": _na_to_none(data.get("Actors")),
         "imdb_rating": _na_to_none(data.get("imdbRating")),
+        "imdb_votes": _na_to_none(data.get("imdbVotes")),
+        "rotten_tomatoes": _na_to_none(ratings.get("Rotten Tomatoes")),
+        "metascore": _na_to_none(data.get("Metascore")),
         "rated": _na_to_none(data.get("Rated")),
         "released": _na_to_none(data.get("Released")),
+        "awards": _na_to_none(data.get("Awards")),
+        "box_office": _na_to_none(data.get("BoxOffice")),
+        "language": _na_to_none(data.get("Language")),
+        "country": _na_to_none(data.get("Country")),
         "total_seasons": _na_to_none(data.get("totalSeasons")),
     }), 200
 
