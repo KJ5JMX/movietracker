@@ -2,6 +2,8 @@
 Movie Night V1 endpoints.
 
 Endpoints:
+  POST /night/preview         body: same filters as /roll. Returns { count } of
+                              matching titles (not Pro-gated; the count is the upsell).
   POST /night/roll            body: { participant_ids, max_runtime?, mood?, media_type? }
                               Returns top 3 candidates from combined want-to-watch lists.
   POST /night/sessions        body: { participant_ids, picked_imdb_id, ...item snapshot }
@@ -92,42 +94,27 @@ def _validate_participants(me_id, participant_ids):
 
 
 # ---------------------------------------------------------------------------
-# Roll: pick top 3 candidates from combined want-to-watch lists
+# Shared filter pipeline for /roll and /preview
 # ---------------------------------------------------------------------------
 
-@night_bp.route("/roll", methods=["POST"])
-@jwt_required()
-def roll():
-    me_id = int(get_jwt_identity())
-    data = request.get_json() or {}
-
-    participant_ids = data.get("participant_ids") or []
-    user_ids, err = _validate_participants(me_id, participant_ids)
-    if err:
-        return jsonify({"message": err}), 400
-
-    # Solo Movie Night is free — roll against your own list all you want.
-    # Bringing friends into the roll (the social payoff) is Pro.
-    if len(user_ids) > 1:
-        me = User.query.get(me_id)
-        if not me or not me.is_pro:
-            return jsonify({
-                "message": "Movie Night with friends requires Pro",
-                "code": "pro_required",
-            }), 402
-
+def _parse_filters(data):
+    """Returns (media_type, max_runtime, mood, error_message)."""
     media_type = data.get("media_type", "movie")
     if media_type not in {"movie", "tv", "any"}:
-        return jsonify({"message": f"Invalid media_type: {media_type}"}), 400
-
+        return None, None, None, f"Invalid media_type: {media_type}"
     max_runtime = data.get("max_runtime")
     if max_runtime is not None:
         try:
             max_runtime = int(max_runtime)
         except (TypeError, ValueError):
-            return jsonify({"message": "max_runtime must be an integer"}), 400
-
+            return None, None, None, "max_runtime must be an integer"
     mood = (data.get("mood") or "").strip().lower() or None
+    return media_type, max_runtime, mood, None
+
+
+def _scored_candidates(user_ids, media_type, max_runtime, mood):
+    """The matching pipeline: group everyone's lists, filter, score.
+    Returns the scored list sorted best-first."""
     mood_keywords = MOOD_GENRES.get(mood, []) if mood else []
 
     # Pull every participant's full list. Group by imdb_id+media_type so we can
@@ -191,6 +178,65 @@ def roll():
         scored.append((score, b))
 
     scored.sort(key=lambda x: x[0], reverse=True)
+    return scored
+
+
+# ---------------------------------------------------------------------------
+# Preview: how many titles match the current filters. Deliberately NOT
+# Pro-gated for groups — the count is the upsell; the roll stays gated.
+# ---------------------------------------------------------------------------
+
+@night_bp.route("/preview", methods=["POST"])
+@jwt_required()
+def preview():
+    me_id = int(get_jwt_identity())
+    data = request.get_json() or {}
+
+    user_ids, err = _validate_participants(me_id, data.get("participant_ids") or [])
+    if err:
+        return jsonify({"message": err}), 400
+    media_type, max_runtime, mood, err = _parse_filters(data)
+    if err:
+        return jsonify({"message": err}), 400
+
+    scored = _scored_candidates(user_ids, media_type, max_runtime, mood)
+    return jsonify({
+        "count": len(scored),
+        "participant_count": len(user_ids),
+        "media_type": media_type,
+    }), 200
+
+
+# ---------------------------------------------------------------------------
+# Roll: pick top 3 candidates from combined want-to-watch lists
+# ---------------------------------------------------------------------------
+
+@night_bp.route("/roll", methods=["POST"])
+@jwt_required()
+def roll():
+    me_id = int(get_jwt_identity())
+    data = request.get_json() or {}
+
+    participant_ids = data.get("participant_ids") or []
+    user_ids, err = _validate_participants(me_id, participant_ids)
+    if err:
+        return jsonify({"message": err}), 400
+
+    # Solo Movie Night is free — roll against your own list all you want.
+    # Bringing friends into the roll (the social payoff) is Pro.
+    if len(user_ids) > 1:
+        me = User.query.get(me_id)
+        if not me or not me.is_pro:
+            return jsonify({
+                "message": "Movie Night with friends requires Pro",
+                "code": "pro_required",
+            }), 402
+
+    media_type, max_runtime, mood, err = _parse_filters(data)
+    if err:
+        return jsonify({"message": err}), 400
+
+    scored = _scored_candidates(user_ids, media_type, max_runtime, mood)
     top = [b for _, b in scored[:3]]
 
     def candidate_dict(b):
@@ -211,6 +257,7 @@ def roll():
         "candidates": [candidate_dict(b) for b in top],
         "participant_count": len(user_ids),
         "had_results": len(scored) > 0,
+        "match_count": len(scored),
     }), 200
 
 
