@@ -135,6 +135,7 @@ def item_to_dict(item, recommenders=None):
         "notes": item.notes,
         "recommended_by_user_id": item.recommended_by_user_id,
         "recommended_by": recommended_by,
+        "remind_release": bool(item.remind_release),
     }
 
 
@@ -228,7 +229,12 @@ def update_watchlist_item(item_id):
 
     data = request.get_json(silent=True) or {}
     # User-editable fields
+    prev_status = item.watch_status
     item.watch_status = data.get("watch_status", item.watch_status)
+    if item.watch_status == "watched" and prev_status != "watched" and not item.watched_at:
+        item.watched_at = datetime.utcnow()
+    if "remind_release" in data:
+        item.remind_release = bool(data.get("remind_release"))
     item.rating = data.get("rating", item.rating)
     item.notes = data.get("notes", item.notes)
     if "seasons_watched" in data:

@@ -20,6 +20,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import or_, and_
 
+from push import notify
 from models import (
     db,
     User,
@@ -283,6 +284,7 @@ def _serialize_session(session, me_id):
         "is_host": session.host_user_id == me_id,
         "status": session.status,
         "created_at": session.created_at.isoformat() if session.created_at else None,
+        "scheduled_for": session.scheduled_for.isoformat() if session.scheduled_for else None,
         "ended_at": session.ended_at.isoformat() if session.ended_at else None,
         "picked": {
             "imdb_id": session.picked_imdb_id,
@@ -297,6 +299,59 @@ def _serialize_session(session, me_id):
         },
         "participants": participant_dicts,
     }
+
+
+def _fmt_when(dt):
+    # "Fri Jun 19, 8:00 PM" (Linux strftime; the container is Linux)
+    return dt.strftime("%a %b %-d, %-I:%M %p")
+
+
+@night_bp.route("/schedule", methods=["POST"])
+@jwt_required()
+def schedule_night():
+    """Plan a Movie Night ahead of time. No pick yet; the host rolls when
+    the night arrives. Invitees get a push now and a reminder near start."""
+    me_id = int(get_jwt_identity())
+    me = User.query.get(me_id)
+    if not me:
+        return jsonify({"message": "User not found"}), 404
+
+    data = request.get_json() or {}
+    user_ids, err = _validate_participants(me_id, data.get("participant_ids") or [])
+    if err:
+        return jsonify({"message": err}), 400
+    if len(user_ids) > 1 and not me.is_pro:
+        return jsonify({
+            "message": "Movie Night with friends requires Pro",
+            "code": "pro_required",
+        }), 402
+
+    raw = data.get("scheduled_for")
+    try:
+        scheduled_for = datetime.fromisoformat(str(raw))
+    except (TypeError, ValueError):
+        return jsonify({"message": "scheduled_for must be an ISO datetime"}), 400
+    if scheduled_for <= datetime.utcnow():
+        return jsonify({"message": "scheduled_for must be in the future"}), 400
+
+    session = MovieNightSession(
+        host_user_id=me_id,
+        status="scheduled",
+        scheduled_for=scheduled_for,
+        filter_max_runtime=data.get("max_runtime"),
+        filter_mood=data.get("mood"),
+    )
+    db.session.add(session)
+    db.session.flush()
+    for uid in user_ids:
+        db.session.add(MovieNightParticipant(session_id=session.id, user_id=uid))
+    db.session.commit()
+
+    host_name = me.display_name or me.username
+    invitees = [uid for uid in user_ids if uid != me_id]
+    notify(invitees, "Movie Night invite",
+           f"{host_name} planned a movie night \u00b7 {_fmt_when(scheduled_for)}")
+    return jsonify(_serialize_session(session, me_id)), 201
 
 
 @night_bp.route("/sessions", methods=["POST"])
@@ -327,6 +382,35 @@ def create_session():
     if not (imdb_id and title):
         return jsonify({"message": "picked_imdb_id and picked_title are required"}), 400
 
+    # Rolling for a previously scheduled night converts that session instead
+    # of creating a parallel one.
+    scheduled_id = data.get("session_id")
+    if scheduled_id:
+        existing = MovieNightSession.query.get(scheduled_id)
+        if (
+            existing
+            and existing.host_user_id == me_id
+            and existing.status == "scheduled"
+        ):
+            existing.status = "active"
+            existing.picked_imdb_id = imdb_id
+            existing.picked_title = title
+            existing.picked_year = data.get("picked_year")
+            existing.picked_poster = data.get("picked_poster")
+            existing.picked_media_type = data.get("picked_media_type", "movie")
+            db.session.commit()
+            host_name = me.display_name or me.username
+            others = [
+                p.user_id
+                for p in MovieNightParticipant.query.filter_by(
+                    session_id=existing.id
+                ).all()
+                if p.user_id != me_id
+            ]
+            notify(others, "Movie Night is starting",
+                   f"{host_name} picked: {title}")
+            return jsonify(_serialize_session(existing, me_id)), 200
+
     session = MovieNightSession(
         host_user_id=me_id,
         picked_imdb_id=imdb_id,
@@ -345,6 +429,10 @@ def create_session():
         db.session.add(MovieNightParticipant(session_id=session.id, user_id=uid))
     db.session.commit()
 
+    host_name = me.display_name or me.username
+    invitees = [uid for uid in user_ids if uid != me_id]
+    notify(invitees, "Movie Night",
+           f"{host_name} started a movie night: {title}")
     return jsonify(_serialize_session(session, me_id)), 201
 
 
@@ -359,7 +447,7 @@ def list_active_sessions():
     sessions = (
         MovieNightSession.query
         .filter(MovieNightSession.id.in_(session_ids))
-        .filter(MovieNightSession.status == "active")
+        .filter(MovieNightSession.status.in_(["active", "scheduled"]))
         .order_by(MovieNightSession.created_at.desc())
         .all()
     )
@@ -441,6 +529,8 @@ def rate_session(session_id):
     if item:
         item.watch_status = "watched"
         item.rating = rating
+        if not item.watched_at:
+            item.watched_at = datetime.utcnow()
         if notes:
             item.notes = notes
     else:
@@ -453,6 +543,7 @@ def rate_session(session_id):
             watch_status="watched",
             rating=rating,
             notes=notes,
+            watched_at=datetime.utcnow(),
             user_id=me_id,
         )
         db.session.add(item)

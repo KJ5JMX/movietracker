@@ -26,3 +26,18 @@ class Config:
     # unset, that endpoint returns 503 and the app's purchase UI stays in
     # "not available yet" mode.
     APPLE_SHARED_SECRET = os.environ.get("APPLE_SHARED_SECRET")
+
+    # APNs push (token-based auth). Until all three are set, push silently
+    # no-ops everywhere -- safe for dev and tests.
+    #   APNS_KEY_PATH: path to the .p8 auth key from the developer portal
+    #   APNS_KEY_ID:   the 10-char Key ID shown next to that key
+    #   APNS_TEAM_ID:  your Apple Developer Team ID
+    APNS_KEY_PATH = os.environ.get("APNS_KEY_PATH")
+    APNS_KEY_ID = os.environ.get("APNS_KEY_ID")
+    APNS_TEAM_ID = os.environ.get("APNS_TEAM_ID")
+    APNS_BUNDLE_ID = os.environ.get(
+        "APNS_BUNDLE_ID", "com.thenobodyprojects.cuedup"
+    )
+    # TestFlight and App Store builds use production APNs; set to "1" only
+    # when testing a development (Xcode-run) build.
+    APNS_USE_SANDBOX = os.environ.get("APNS_USE_SANDBOX") == "1"

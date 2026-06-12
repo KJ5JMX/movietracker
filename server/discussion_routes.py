@@ -26,6 +26,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import or_, and_
 
+from push import notify
 from models import db, User, WatchlistItem, Friendship, DiscussionComment
 
 
@@ -191,6 +192,25 @@ def post_comment(media_type, external_id):
     db.session.commit()
 
     user = User.query.get(me_id)
+
+    # Notify friends who share this book AND have read at least this far.
+    # Same spoiler gate as the read path: nobody hears about a chapter they
+    # have not reached.
+    friend_ids = _friend_ids(me_id)
+    if friend_ids:
+        eligible = WatchlistItem.query.filter(
+            WatchlistItem.user_id.in_(friend_ids),
+            WatchlistItem.imdb_id == external_id,
+            WatchlistItem.media_type == media_type,
+            WatchlistItem.chapter_progress >= chapter,
+        ).all()
+        book_title = my_item.title or "a book you're reading"
+        poster_name = (user.display_name or user.username) if user else "A friend"
+        notify(
+            [it.user_id for it in eligible],
+            f"{poster_name} \u00b7 {book_title} ch {chapter}",
+            comment.body[:100],
+        )
     return jsonify({
         "id": comment.id,
         "user": _user_summary(user),

@@ -1,4 +1,6 @@
 import json
+import csv
+import io
 import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -180,6 +182,50 @@ def _interleave_results(*lists):
     return merged
 
 
+def _expand_csv_export(lines):
+    """Detect a pasted Letterboxd/Goodreads CSV export and reduce it to
+    plain "Title (Year)" lines. Anything that doesn't look like one of
+    those exports passes through untouched."""
+    if not lines or not isinstance(lines, list):
+        return lines
+    header = str(lines[0]).lower()
+    looks_letterboxd = "letterboxd uri" in header
+    looks_goodreads = "title" in header and "author" in header and "," in header
+    looks_generic_csv = "name" in header and "year" in header and "," in header
+    if not (looks_letterboxd or looks_goodreads or looks_generic_csv):
+        return lines
+    try:
+        rows = list(csv.reader(io.StringIO("\n".join(str(l) for l in lines))))
+    except csv.Error:
+        return lines
+    if len(rows) < 2:
+        return lines
+    head = [h.strip().lower() for h in rows[0]]
+
+    def col(*names):
+        for n in names:
+            if n in head:
+                return head.index(n)
+        return None
+
+    title_i = col("name", "title")
+    year_i = col("year", "original publication year", "year published")
+    if title_i is None:
+        return lines
+    out = []
+    for row in rows[1:]:
+        if len(row) <= title_i:
+            continue
+        title = row[title_i].strip()
+        if not title:
+            continue
+        year = ""
+        if year_i is not None and len(row) > year_i:
+            year = row[year_i].strip()
+        out.append(f"{title} ({year})" if year else title)
+    return out or lines
+
+
 def _clean_import_line(raw):
     """Strip common list-prefix junk (numbers, bullets, dashes) from a line."""
     if not isinstance(raw, str):
@@ -237,7 +283,7 @@ def import_titles():
     OMDb match candidates for each, so the frontend can let the user confirm
     before bulk-adding to their watchlist."""
     data = request.get_json() or {}
-    lines = data.get("lines") or []
+    lines = _expand_csv_export(data.get("lines") or [])
     media_type = data.get("media_type", "all")
 
     omdb_type = None

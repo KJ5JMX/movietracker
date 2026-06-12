@@ -166,6 +166,18 @@ class WatchlistItem(db.Model):
     watch_status = db.Column(db.String, default="want_to_watch", nullable=False)
     rating = db.Column(db.Integer)
     notes = db.Column(db.String)
+    # "Remind me when this comes out" — the jobs process pushes on release
+    # day and flips release_reminded so it only ever fires once.
+    remind_release = db.Column(
+        db.Boolean, default=False, server_default="0", nullable=False
+    )
+    release_reminded = db.Column(
+        db.Boolean, default=False, server_default="0", nullable=False
+    )
+    # Timestamps powering That's a Wrap. Nullable: rows from before this
+    # column existed have unknown dates.
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=True)
+    watched_at = db.Column(db.DateTime, nullable=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     # When this item was added by accepting a recommendation, points to the friend who sent it.
     # Named FK so SQLite batch-mode add_column can apply it on existing tables.
@@ -228,11 +240,19 @@ class MovieNightSession(db.Model):
         default="active",
         server_default="active",
         nullable=False,
-    )  # active, ended, abandoned
+    )  # scheduled, active, ended, abandoned
 
-    # Snapshot of the picked item (the watchlist item itself may be added/removed independently)
-    picked_imdb_id = db.Column(db.String, nullable=False)
-    picked_title = db.Column(db.String, nullable=False)
+    # Scheduled nights: set when the host plans ahead. The jobs process sends
+    # a reminder push shortly before scheduled_for.
+    scheduled_for = db.Column(db.DateTime, nullable=True)
+    reminder_sent = db.Column(
+        db.Boolean, default=False, server_default="0", nullable=False
+    )
+
+    # Snapshot of the picked item (the watchlist item itself may be added/removed
+    # independently). Nullable because a scheduled night has no pick yet.
+    picked_imdb_id = db.Column(db.String, nullable=True)
+    picked_title = db.Column(db.String, nullable=True)
     picked_year = db.Column(db.String, nullable=True)
     picked_poster = db.Column(db.String, nullable=True)
     picked_media_type = db.Column(db.String, nullable=False, default="movie")
@@ -240,6 +260,26 @@ class MovieNightSession(db.Model):
     # Filters used for the roll (kept for audit / "re-roll with same filters")
     filter_max_runtime = db.Column(db.Integer, nullable=True)
     filter_mood = db.Column(db.String, nullable=True)
+
+
+class DeviceToken(db.Model):
+    """One row per registered push device. A token follows whichever account
+    registered it most recently (sign-out/sign-in on a shared phone)."""
+
+    __tablename__ = "device_tokens"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", name="fk_device_token_user"),
+        nullable=False,
+        index=True,
+    )
+    token = db.Column(db.String, unique=True, nullable=False)
+    platform = db.Column(
+        db.String, default="ios", server_default="ios", nullable=False
+    )  # ios | android
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
 
 class MovieNightParticipant(db.Model):

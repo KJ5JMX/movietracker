@@ -5,6 +5,9 @@ set -e
 echo "[entrypoint] running database migrations..."
 flask db upgrade
 
+echo "[entrypoint] starting jobs process (push reminders)..."
+python jobs.py &
+
 echo "[entrypoint] starting gunicorn..."
 # Threaded workers: request time is mostly OMDb/iTunes/Open Library network
 # wait, and fewer processes = less SQLite write contention.

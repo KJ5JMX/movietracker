@@ -352,9 +352,14 @@ def delete_me():
     ).delete(synchronize_session=False)
 
     # Discussion comments are this user's own words — they go with the account.
-    from models import DiscussionComment
+    from models import DiscussionComment, DeviceToken
     DiscussionComment.query.filter(
         DiscussionComment.user_id == user_id
+    ).delete(synchronize_session=False)
+
+    # Push device tokens die with the account.
+    DeviceToken.query.filter(
+        DeviceToken.user_id == user_id
     ).delete(synchronize_session=False)
 
     # Other users' items that credit this user as recommender: drop the

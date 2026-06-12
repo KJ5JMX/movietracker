@@ -13,6 +13,8 @@ python-dotenv = "*"
 requests = "*"
 gunicorn = "*"
 psycopg2-binary = "*"
+httpx = {version = "*", extras = ["http2"]}
+cryptography = "*"
 
 [dev-packages]
 
