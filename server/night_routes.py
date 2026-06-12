@@ -415,6 +415,10 @@ def rate_session(session_id):
     if not (1 <= rating <= 5):
         return jsonify({"message": "rating must be 1-5"}), 400
 
+    # Optional written review, stored as the item's notes (same field the
+    # Detail screen edits)
+    notes = (data.get("notes") or "").strip()[:2000] or None
+
     session = MovieNightSession.query.get(session_id)
     if not session:
         return jsonify({"message": "Session not found"}), 404
@@ -437,6 +441,8 @@ def rate_session(session_id):
     if item:
         item.watch_status = "watched"
         item.rating = rating
+        if notes:
+            item.notes = notes
     else:
         item = WatchlistItem(
             title=session.picked_title,
@@ -446,6 +452,7 @@ def rate_session(session_id):
             poster=session.picked_poster,
             watch_status="watched",
             rating=rating,
+            notes=notes,
             user_id=me_id,
         )
         db.session.add(item)
