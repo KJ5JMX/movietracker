@@ -14,7 +14,7 @@ Endpoints:
 """
 
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
@@ -328,9 +328,12 @@ def schedule_night():
 
     raw = data.get("scheduled_for")
     try:
-        scheduled_for = datetime.fromisoformat(str(raw))
+        scheduled_for = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return jsonify({"message": "scheduled_for must be an ISO datetime"}), 400
+    # Normalize to naive UTC (the whole codebase uses naive utcnow)
+    if scheduled_for.tzinfo is not None:
+        scheduled_for = scheduled_for.astimezone(timezone.utc).replace(tzinfo=None)
     if scheduled_for <= datetime.utcnow():
         return jsonify({"message": "scheduled_for must be in the future"}), 400
 
@@ -349,8 +352,10 @@ def schedule_night():
 
     host_name = me.display_name or me.username
     invitees = [uid for uid in user_ids if uid != me_id]
+    when_label = str(data.get("when_label") or "").strip()[:40]
+    when = when_label or _fmt_when(scheduled_for) + " UTC"
     notify(invitees, "Movie Night invite",
-           f"{host_name} planned a movie night \u00b7 {_fmt_when(scheduled_for)}")
+           f"{host_name} planned a movie night \u00b7 {when}")
     return jsonify(_serialize_session(session, me_id)), 201
 
 

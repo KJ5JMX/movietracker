@@ -61,7 +61,7 @@ def _night_reminders():
         notify(
             participant_ids,
             "Movie Night soon",
-            f"Your movie night starts at {s.scheduled_for.strftime('%-I:%M %p')}",
+            "Your movie night starts within the hour",
             app=app,
         )
         s.reminder_sent = True
