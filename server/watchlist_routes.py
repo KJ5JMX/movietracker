@@ -242,6 +242,11 @@ def update_watchlist_item(item_id):
                 progress = int(raw)
                 if progress >= 0:
                     item.chapter_progress = progress
+                    # Starting a book IS reading it: progress flips
+                    # want_to_watch -> reading automatically. Never touches
+                    # 'watched' (re-reading a chapter doesn't un-finish it).
+                    if progress > 0 and item.watch_status == "want_to_watch":
+                        item.watch_status = "reading"
             except (TypeError, ValueError):
                 pass  # ignore garbage; keep existing progress
     # Metadata fields (used for auto-backfill from DetailScreen)

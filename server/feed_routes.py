@@ -279,6 +279,42 @@ def _section_other_shelves(me_id, friend_ids, owned):
     return out
 
 
+def _section_currently_reading(me_id, friend_ids, owned):
+    """Books friends are actively reading right now, with their chapter.
+    A reading position is motivation, not a spoiler — it invites you to grab
+    the book and join the chapter discussion."""
+    if not friend_ids:
+        return []
+    items = (
+        WatchlistItem.query
+        .filter(WatchlistItem.user_id.in_(friend_ids))
+        .filter(WatchlistItem.media_type == "book")
+        .filter(WatchlistItem.watch_status == "reading")
+        .order_by(WatchlistItem.id.desc())
+        .limit(SECTION_LIMIT * 2)
+        .all()
+    )
+    users_by_id = {
+        u.id: u for u in User.query.filter(User.id.in_(friend_ids)).all()
+    }
+    seen = set()
+    out = []
+    for it in items:
+        key = (it.imdb_id, it.media_type)
+        if key in seen:
+            continue
+        seen.add(key)
+        reader = users_by_id.get(it.user_id)
+        reader_name = (reader.display_name or reader.username) if reader else "A friend"
+        chapter = f" · ch {it.chapter_progress}" if it.chapter_progress else ""
+        out.append(_item_to_feed_dict(
+            it, f"{reader_name} is reading this{chapter}", reader
+        ))
+        if len(out) >= SECTION_LIMIT:
+            break
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Route
 # ---------------------------------------------------------------------------
@@ -322,6 +358,12 @@ def get_feed():
                 else "Upcoming picks from friends' lists"
             ),
             "items": _section_coming_soon(me_id, friend_ids, owned, user_genres),
+        },
+        {
+            "id": "currently_reading",
+            "title": "FRIENDS ARE READING",
+            "subtitle": "Grab the book, join the chapter talk",
+            "items": _section_currently_reading(me_id, friend_ids, owned),
         },
         {
             "id": "friend_loves",
