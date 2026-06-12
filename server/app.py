@@ -33,6 +33,7 @@ from night_routes import night_bp
 from media_routes import songs_bp, books_bp
 from feed_routes import feed_bp
 from iap_routes import iap_bp
+from discussion_routes import discussion_bp
 
 
 app = Flask(__name__)
@@ -47,6 +48,7 @@ app.register_blueprint(songs_bp)
 app.register_blueprint(books_bp)
 app.register_blueprint(feed_bp)
 app.register_blueprint(iap_bp)
+app.register_blueprint(discussion_bp)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 db.init_app(app)

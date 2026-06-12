@@ -160,6 +160,9 @@ class WatchlistItem(db.Model):
     # Runtime in minutes (parsed from OMDb's "Runtime" e.g. "148 min"). Nullable for back-compat.
     runtime_minutes = db.Column(db.Integer, nullable=True)
     seasons_watched = db.Column(db.String)  # JSON-encoded list of season numbers, TV only
+    # Reading progress for books (chapter number). Drives the spoiler gate on
+    # friend discussions: you only see comments tagged <= your progress.
+    chapter_progress = db.Column(db.Integer, nullable=True)
     watch_status = db.Column(db.String, default="want_to_watch", nullable=False)
     rating = db.Column(db.Integer)
     notes = db.Column(db.String)
@@ -170,6 +173,39 @@ class WatchlistItem(db.Model):
         db.Integer,
         db.ForeignKey("users.id", name="fk_watchlist_recommended_by_user_id"),
         nullable=True,
+    )
+
+
+class DiscussionComment(db.Model):
+    """Chapter-tagged comment on a book (Sierra's spoiler-safe book club).
+
+    Visibility rules live in discussion_routes, enforced server-side:
+    - readers see comments from THEIR friends (and themselves) only
+    - readers see comments tagged <= their own chapter_progress
+    - posters can't tag a chapter above their own progress
+    """
+
+    __tablename__ = "discussion_comments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", name="fk_discussion_comment_user"),
+        nullable=False,
+        index=True,
+    )
+    # External id + media type of the item being discussed (book work ids for
+    # now; the imdb_id column convention matches watchlist_items).
+    imdb_id = db.Column(db.String, nullable=False)
+    media_type = db.Column(
+        db.String, default="book", server_default="book", nullable=False
+    )
+    chapter = db.Column(db.Integer, nullable=False)
+    body = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        db.Index("ix_discussion_item", "imdb_id", "media_type"),
     )
 
 

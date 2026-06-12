@@ -351,6 +351,12 @@ def delete_me():
         StreamingServiceTap.user_id == user_id
     ).delete(synchronize_session=False)
 
+    # Discussion comments are this user's own words — they go with the account.
+    from models import DiscussionComment
+    DiscussionComment.query.filter(
+        DiscussionComment.user_id == user_id
+    ).delete(synchronize_session=False)
+
     # Other users' items that credit this user as recommender: drop the
     # attribution, keep their item.
     WatchlistItem.query.filter(

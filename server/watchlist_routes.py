@@ -129,6 +129,7 @@ def item_to_dict(item, recommenders=None):
         "coming_soon": coming_soon,
         "runtime_minutes": item.runtime_minutes,
         "seasons_watched": _parse_seasons(item.seasons_watched),
+        "chapter_progress": item.chapter_progress,
         "watch_status": item.watch_status,
         "rating": item.rating,
         "notes": item.notes,
@@ -232,6 +233,17 @@ def update_watchlist_item(item_id):
     item.notes = data.get("notes", item.notes)
     if "seasons_watched" in data:
         item.seasons_watched = _serialize_seasons(data.get("seasons_watched"))
+    if "chapter_progress" in data:
+        raw = data.get("chapter_progress")
+        if raw is None:
+            item.chapter_progress = None
+        else:
+            try:
+                progress = int(raw)
+                if progress >= 0:
+                    item.chapter_progress = progress
+            except (TypeError, ValueError):
+                pass  # ignore garbage; keep existing progress
     # Metadata fields (used for auto-backfill from DetailScreen)
     item.plot = data.get("plot", item.plot)
     item.genre = data.get("genre", item.genre)
