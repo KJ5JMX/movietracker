@@ -41,3 +41,45 @@ class Config:
     # TestFlight and App Store builds use production APNs; set to "1" only
     # when testing a development (Xcode-run) build.
     APNS_USE_SANDBOX = os.environ.get("APNS_USE_SANDBOX") == "1"
+
+    # Password reset via emailed link. While RESEND_API_KEY is unset, the
+    # forgot-password endpoint still responds normally but no mail is sent
+    # (safe for dev/tests). Get the key from resend.com and verify the sending
+    # domain there first.
+    #   RESEND_API_KEY:   API key from the Resend dashboard
+    #   RESET_FROM_EMAIL: verified sender, e.g. 'ShelfMates <noreply@thenobodyprojects.com>'
+    #   APP_PUBLIC_URL:   public base URL the reset link points at (this backend)
+    #   RESET_TOKEN_TTL_MINUTES: how long a reset link stays valid
+    RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
+    RESET_FROM_EMAIL = os.environ.get(
+        "RESET_FROM_EMAIL", "ShelfMates <noreply@thenobodyprojects.com>"
+    )
+    APP_PUBLIC_URL = os.environ.get(
+        "APP_PUBLIC_URL", "https://cuedup-api.thenobodyprojects.com"
+    ).rstrip("/")
+    RESET_TOKEN_TTL_MINUTES = int(os.environ.get("RESET_TOKEN_TTL_MINUTES", "60"))
+
+    # Social sign-in. The backend verifies the provider's identity token and
+    # accepts it only if its audience matches one of these client IDs. Until
+    # they're set, /auth/apple and /auth/google return 503 (feature off), the
+    # same pattern as IAP.
+    #
+    # Apple: for native iOS the token's `aud` is your app bundle ID. Add a
+    # Services ID too if you later add web/Android Apple sign-in.
+    #   APPLE_CLIENT_IDS: comma-separated, e.g. 'com.thenobodyprojects.cuedup'
+    # Google: the token's `aud` is the OAuth *web/server* client ID configured
+    # in the app (react-native-google-signin's webClientId). List every client
+    # ID that can mint tokens for you (iOS, web, Android).
+    #   GOOGLE_CLIENT_IDS: comma-separated OAuth client IDs
+    APPLE_CLIENT_IDS = [
+        s.strip()
+        for s in os.environ.get(
+            "APPLE_CLIENT_IDS", "com.thenobodyprojects.cuedup"
+        ).split(",")
+        if s.strip()
+    ]
+    GOOGLE_CLIENT_IDS = [
+        s.strip()
+        for s in os.environ.get("GOOGLE_CLIENT_IDS", "").split(",")
+        if s.strip()
+    ]

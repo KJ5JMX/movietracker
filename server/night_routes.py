@@ -492,6 +492,108 @@ def end_session(session_id):
     return jsonify(_serialize_session(session, me_id)), 200
 
 
+@night_bp.route("/sessions/<int:session_id>", methods=["PATCH"])
+@jwt_required()
+def edit_scheduled_night(session_id):
+    """Edit a planned (not-yet-rolled) Movie Night: change the time, who's
+    invited, or the filters. Host only, and only while it's still scheduled."""
+    me_id = int(get_jwt_identity())
+    me = User.query.get(me_id)
+    if not me:
+        return jsonify({"message": "User not found"}), 404
+
+    session = MovieNightSession.query.get(session_id)
+    if not session:
+        return jsonify({"message": "Session not found"}), 404
+    if session.host_user_id != me_id:
+        return jsonify({"message": "Only the host can edit this night"}), 403
+    if session.status != "scheduled":
+        return jsonify({"message": "Only scheduled nights can be edited"}), 400
+
+    data = request.get_json() or {}
+
+    if "scheduled_for" in data:
+        raw = data.get("scheduled_for")
+        try:
+            scheduled_for = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return jsonify({"message": "scheduled_for must be an ISO datetime"}), 400
+        if scheduled_for.tzinfo is not None:
+            scheduled_for = scheduled_for.astimezone(timezone.utc).replace(tzinfo=None)
+        if scheduled_for <= datetime.utcnow():
+            return jsonify({"message": "scheduled_for must be in the future"}), 400
+        session.scheduled_for = scheduled_for
+        # New time means the prior reminder no longer applies.
+        session.reminder_sent = False
+
+    if "participant_ids" in data:
+        user_ids, err = _validate_participants(me_id, data.get("participant_ids") or [])
+        if err:
+            return jsonify({"message": err}), 400
+        if len(user_ids) > 1 and not me.is_pro:
+            return jsonify({
+                "message": "Movie Night with friends requires Pro",
+                "code": "pro_required",
+            }), 402
+        MovieNightParticipant.query.filter_by(session_id=session.id).delete(
+            synchronize_session=False
+        )
+        for uid in user_ids:
+            db.session.add(MovieNightParticipant(session_id=session.id, user_id=uid))
+
+    if "max_runtime" in data:
+        session.filter_max_runtime = data.get("max_runtime")
+    if "mood" in data:
+        session.filter_mood = data.get("mood")
+
+    db.session.commit()
+
+    host_name = me.display_name or me.username
+    others = [
+        p.user_id
+        for p in MovieNightParticipant.query.filter_by(session_id=session.id).all()
+        if p.user_id != me_id
+    ]
+    when_label = str(data.get("when_label") or "").strip()[:40]
+    when = when_label or (
+        _fmt_when(session.scheduled_for) + " UTC" if session.scheduled_for else ""
+    )
+    notify(others, "Movie Night updated",
+           f"{host_name} changed the plan · {when}".strip(" · "))
+    return jsonify(_serialize_session(session, me_id)), 200
+
+
+@night_bp.route("/sessions/<int:session_id>", methods=["DELETE"])
+@jwt_required()
+def cancel_scheduled_night(session_id):
+    """Cancel a planned Movie Night. Host only, scheduled only (an active
+    night is ended via /end, not deleted)."""
+    me_id = int(get_jwt_identity())
+    me = User.query.get(me_id)
+    session = MovieNightSession.query.get(session_id)
+    if not session:
+        return jsonify({"message": "Session not found"}), 404
+    if session.host_user_id != me_id:
+        return jsonify({"message": "Only the host can cancel this night"}), 403
+    if session.status != "scheduled":
+        return jsonify({"message": "Only scheduled nights can be canceled"}), 400
+
+    others = [
+        p.user_id
+        for p in MovieNightParticipant.query.filter_by(session_id=session.id).all()
+        if p.user_id != me_id
+    ]
+    MovieNightParticipant.query.filter_by(session_id=session.id).delete(
+        synchronize_session=False
+    )
+    db.session.delete(session)
+    db.session.commit()
+
+    host_name = me.display_name or me.username
+    notify(others, "Movie Night canceled", f"{host_name} called off the movie night")
+    return jsonify({"message": "Movie night canceled", "id": session_id}), 200
+
+
 @night_bp.route("/sessions/<int:session_id>/rate", methods=["POST"])
 @jwt_required()
 def rate_session(session_id):

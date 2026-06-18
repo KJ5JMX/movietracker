@@ -40,6 +40,18 @@ class User(db.Model):
     # Drives the discovery feed's filtering. Stored as text to keep this SQLite-safe
     # without needing a JSON column type.
     genres = db.Column(db.Text, nullable=True)
+    # Social sign-in. Stable per-provider subject ids ('sub' claim). A social
+    # user has no usable password (a random hash is stored). Unique so one
+    # Apple/Google identity maps to exactly one account; NULL for accounts that
+    # never used that provider.
+    apple_sub = db.Column(db.String, nullable=True, unique=True, index=True)
+    google_sub = db.Column(db.String, nullable=True, unique=True, index=True)
+    # False only for a brand-new social account that hasn't picked a username
+    # yet; the app routes those to the onboarding screen. Everyone else
+    # (email/password signups, existing users) is onboarded by default.
+    onboarded = db.Column(
+        db.Boolean, default=True, server_default="1", nullable=False
+    )
 
     @property
     def is_pro(self):
@@ -51,6 +63,27 @@ class User(db.Model):
         cascade="all, delete-orphan",
         foreign_keys="WatchlistItem.user_id",
     )
+
+
+class PasswordResetToken(db.Model):
+    """A single-use, time-limited password reset token.
+
+    We store only the SHA-256 hash of the token, never the raw value, so a
+    leak of this table can't be used to reset anyone's password. The raw token
+    lives only in the emailed link. A row is consumed (used_at set) on a
+    successful reset and ignored once expired.
+    """
+
+    __tablename__ = "password_reset_tokens"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id"), nullable=False, index=True
+    )
+    token_hash = db.Column(db.String, nullable=False, index=True)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    used_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
 
 class Friendship(db.Model):

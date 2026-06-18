@@ -15,6 +15,7 @@ Endpoints:
 """
 
 import json
+from datetime import datetime
 from flask import Blueprint, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import or_
@@ -24,14 +25,10 @@ from models import User, Friendship, WatchlistItem
 
 feed_bp = Blueprint("feed", __name__, url_prefix="/feed")
 
-# How many items to show per section. Tight on purpose — the feed should feel
-# editorially curated, not infinite-scroll.
-SECTION_LIMIT = 8
-
-# How recent counts as "recent" for friend additions. We use WatchlistItem.id
-# as a proxy for created_at (no timestamp column exists today) — for a given
-# friend, the highest id is the most recently added.
-RECENT_PER_FRIEND = 10
+# One chronological stream of friend activity, with genre suggestions sprinkled
+# in. Tuned to feel like a feed you scroll, not five cramped shelves.
+ACTIVITY_LIMIT = 40        # most-recent friend events to surface
+SUGGESTION_EVERY = 9       # drop a genre suggestion every N activity items
 
 
 def _user_summary(user):
@@ -88,7 +85,7 @@ def _my_imdb_ids(me_id):
     return {(r.imdb_id, r.media_type) for r in rows}
 
 
-def _item_to_feed_dict(item, reason, reason_user=None):
+def _item_to_feed_dict(item, reason, reason_user=None, kind="activity"):
     """Lightweight feed-item dict. Mirrors WatchlistItem serializer's main fields
     but adds the `reason` line that drives the cozy, transparent feed copy."""
     return {
@@ -111,6 +108,8 @@ def _item_to_feed_dict(item, reason, reason_user=None):
         # Discovery-specific
         "reason": reason,
         "reason_user": _user_summary(reason_user),
+        "kind": kind,  # "activity" | "suggestion"
+        "created_at": item.created_at.isoformat() if item.created_at else None,
     }
 
 
@@ -124,26 +123,48 @@ def _genre_match(item_genre, user_genres):
 
 
 # ---------------------------------------------------------------------------
-# Section builders
+# Feed builders
 # ---------------------------------------------------------------------------
 
-def _section_friend_activity(me_id, friend_ids, owned):
-    """Recent additions by friends (any want_to_watch item I don't have).
-    Most recently added across all friends, deduped by imdb_id+media_type."""
+def _event_reason(it, users_by_id):
+    """The single 'who did what' line for one friend's item, picking the
+    strongest signal: a high rating, then active reading, else a plain add."""
+    user = users_by_id.get(it.user_id)
+    name = (user.display_name or user.username) if user else "A friend"
+    if it.rating and it.rating >= 4:
+        return f"{name} rated this " + "★" * int(it.rating), user
+    if it.media_type == "book" and it.watch_status == "reading":
+        chapter = f" · ch {it.chapter_progress}" if it.chapter_progress else ""
+        return f"{name} is reading this{chapter}", user
+    return f"{name} added this", user
+
+
+def _sort_key(it):
+    """Newest first by created_at, with id as a stable fallback (and so rows
+    that predate created_at sort to the bottom rather than crash)."""
+    return (it.created_at or datetime.min, it.id)
+
+
+def _build_activity(friend_ids, owned):
+    """One merged, most-recent-first stream of friend activity: things they
+    added, are reading, or rated highly. Deduped, excludes what I already own."""
     if not friend_ids:
         return []
-    # Pull recent items from all friends, ordered by id desc (proxy for recency)
     items = (
         WatchlistItem.query
         .filter(WatchlistItem.user_id.in_(friend_ids))
-        .filter(WatchlistItem.watch_status == "want_to_watch")
-        .order_by(WatchlistItem.id.desc())
-        .limit(SECTION_LIMIT * 4)  # over-fetch so we have room after dedupe
+        .filter(
+            or_(
+                WatchlistItem.watch_status.in_(["want_to_watch", "reading"]),
+                WatchlistItem.rating >= 4,
+            )
+        )
         .all()
     )
     users_by_id = {
         u.id: u for u in User.query.filter(User.id.in_(friend_ids)).all()
     }
+    items.sort(key=_sort_key, reverse=True)
     seen = set()
     out = []
     for it in items:
@@ -151,167 +172,54 @@ def _section_friend_activity(me_id, friend_ids, owned):
         if key in owned or key in seen:
             continue
         seen.add(key)
-        adder = users_by_id.get(it.user_id)
-        adder_name = (adder.display_name or adder.username) if adder else "A friend"
-        out.append(_item_to_feed_dict(it, f"{adder_name} added this", adder))
-        if len(out) >= SECTION_LIMIT:
+        reason, user = _event_reason(it, users_by_id)
+        out.append(_item_to_feed_dict(it, reason, user, kind="activity"))
+        if len(out) >= ACTIVITY_LIMIT:
             break
-    return out
+    return out, seen
 
 
-def _section_coming_soon(me_id, friend_ids, owned, user_genres):
-    """Upcoming items (release date in future) from friends, optionally filtered
-    by my genres. If I have no genre prefs, no filter — show all upcoming friend picks."""
-    from datetime import date
-    from watchlist_routes import _parse_release_date
-
-    if not friend_ids:
+def _build_suggestions(friend_ids, owned, user_genres, exclude):
+    """Genre-matched picks from friends' want-to-watch lists, to sprinkle into
+    the stream. Empty if the user picked no genres."""
+    if not friend_ids or not user_genres:
         return []
-
-    # Pull all friend items with a released field; filter coming_soon in Python
-    # (parsing the OMDb date string isn't something SQLite can do cleanly).
+    # Any genre-matched item on a friend's shelf that the activity stream
+    # didn't already surface. Drawn from all statuses so suggestions still
+    # appear even when recent activity already covers the want-to-watch items.
     candidates = (
         WatchlistItem.query
         .filter(WatchlistItem.user_id.in_(friend_ids))
-        .filter(WatchlistItem.released.isnot(None))
+        .order_by(WatchlistItem.id.desc())
         .all()
     )
-
-    today = date.today()
     users_by_id = {
         u.id: u for u in User.query.filter(User.id.in_(friend_ids)).all()
     }
     seen = set()
     out = []
-    # Sort by parsed release date ascending (soonest first)
-    parsed = []
     for it in candidates:
-        rd = _parse_release_date(it.released)
-        if not rd or rd <= today:
-            continue
-        parsed.append((rd, it))
-    parsed.sort(key=lambda x: x[0])
-
-    for rd, it in parsed:
         key = (it.imdb_id, it.media_type)
-        if key in owned or key in seen:
+        if key in owned or key in exclude or key in seen:
             continue
-        if user_genres and not _genre_match(it.genre, user_genres):
+        if not _genre_match(it.genre, user_genres):
             continue
         seen.add(key)
-        adder = users_by_id.get(it.user_id)
-        adder_name = (adder.display_name or adder.username) if adder else "A friend"
-        reason = (
-            f"{adder_name} is waiting for this"
-            if not user_genres
-            else f"In your genres · {adder_name} is waiting for this"
-        )
-        out.append(_item_to_feed_dict(it, reason, adder))
-        if len(out) >= SECTION_LIMIT:
-            break
+        out.append(_item_to_feed_dict(
+            it, "In your genres", users_by_id.get(it.user_id), kind="suggestion"
+        ))
     return out
 
 
-def _section_friend_loves(me_id, friend_ids, owned):
-    """Items friends rated 4+ stars. Strong personal endorsement."""
-    if not friend_ids:
-        return []
-    items = (
-        WatchlistItem.query
-        .filter(WatchlistItem.user_id.in_(friend_ids))
-        .filter(WatchlistItem.rating.isnot(None))
-        .filter(WatchlistItem.rating >= 4)
-        .order_by(WatchlistItem.id.desc())
-        .limit(SECTION_LIMIT * 4)
-        .all()
-    )
-    users_by_id = {
-        u.id: u for u in User.query.filter(User.id.in_(friend_ids)).all()
-    }
-    seen = set()
+def _interleave(activity, suggestions, every):
+    """Drop one suggestion after every `every` activity items."""
     out = []
-    for it in items:
-        key = (it.imdb_id, it.media_type)
-        if key in owned or key in seen:
-            continue
-        seen.add(key)
-        rater = users_by_id.get(it.user_id)
-        rater_name = (rater.display_name or rater.username) if rater else "A friend"
-        stars = "★" * (it.rating or 0)
-        out.append(_item_to_feed_dict(
-            it, f"{rater_name} rated this {stars}", rater
-        ))
-        if len(out) >= SECTION_LIMIT:
-            break
-    return out
-
-
-def _section_other_shelves(me_id, friend_ids, owned):
-    """Cross-media discovery: songs and books friends have added."""
-    if not friend_ids:
-        return []
-    items = (
-        WatchlistItem.query
-        .filter(WatchlistItem.user_id.in_(friend_ids))
-        .filter(WatchlistItem.media_type.in_(["song", "book"]))
-        .order_by(WatchlistItem.id.desc())
-        .limit(SECTION_LIMIT * 4)
-        .all()
-    )
-    users_by_id = {
-        u.id: u for u in User.query.filter(User.id.in_(friend_ids)).all()
-    }
-    seen = set()
-    out = []
-    for it in items:
-        key = (it.imdb_id, it.media_type)
-        if key in owned or key in seen:
-            continue
-        seen.add(key)
-        adder = users_by_id.get(it.user_id)
-        adder_name = (adder.display_name or adder.username) if adder else "A friend"
-        kind = "book" if it.media_type == "book" else "song"
-        out.append(_item_to_feed_dict(
-            it, f"{adder_name} added this {kind}", adder
-        ))
-        if len(out) >= SECTION_LIMIT:
-            break
-    return out
-
-
-def _section_currently_reading(me_id, friend_ids, owned):
-    """Books friends are actively reading right now, with their chapter.
-    A reading position is motivation, not a spoiler — it invites you to grab
-    the book and join the chapter discussion."""
-    if not friend_ids:
-        return []
-    items = (
-        WatchlistItem.query
-        .filter(WatchlistItem.user_id.in_(friend_ids))
-        .filter(WatchlistItem.media_type == "book")
-        .filter(WatchlistItem.watch_status == "reading")
-        .order_by(WatchlistItem.id.desc())
-        .limit(SECTION_LIMIT * 2)
-        .all()
-    )
-    users_by_id = {
-        u.id: u for u in User.query.filter(User.id.in_(friend_ids)).all()
-    }
-    seen = set()
-    out = []
-    for it in items:
-        key = (it.imdb_id, it.media_type)
-        if key in seen:
-            continue
-        seen.add(key)
-        reader = users_by_id.get(it.user_id)
-        reader_name = (reader.display_name or reader.username) if reader else "A friend"
-        chapter = f" · ch {it.chapter_progress}" if it.chapter_progress else ""
-        out.append(_item_to_feed_dict(
-            it, f"{reader_name} is reading this{chapter}", reader
-        ))
-        if len(out) >= SECTION_LIMIT:
-            break
+    si = 0
+    for i, a in enumerate(activity):
+        out.append(a)
+        if (i + 1) % every == 0 and si < len(suggestions):
+            out.append(suggestions[si])
+            si += 1
     return out
 
 
@@ -339,48 +247,15 @@ def get_feed():
     owned = _my_imdb_ids(me_id)
     user_genres = _parse_genres(me.genres)
 
-    sections = [
-        {
-            "id": "friend_activity",
-            "title": "ON YOUR FRIENDS' LISTS",
-            "subtitle": "What they've added recently",
-            "items": _section_friend_activity(me_id, friend_ids, owned),
-        },
-        {
-            "id": "coming_soon",
-            "title": (
-                "COMING SOON IN YOUR GENRES"
-                if user_genres else "COMING SOON FROM FRIENDS"
-            ),
-            "subtitle": (
-                "Upcoming picks that match your taste"
-                if user_genres
-                else "Upcoming picks from friends' lists"
-            ),
-            "items": _section_coming_soon(me_id, friend_ids, owned, user_genres),
-        },
-        {
-            "id": "currently_reading",
-            "title": "FRIENDS ARE READING",
-            "subtitle": "Grab the book, join the chapter talk",
-            "items": _section_currently_reading(me_id, friend_ids, owned),
-        },
-        {
-            "id": "friend_loves",
-            "title": "WHAT FRIENDS ARE LOVING",
-            "subtitle": "Highly rated by people you know",
-            "items": _section_friend_loves(me_id, friend_ids, owned),
-        },
-        {
-            "id": "other_shelves",
-            "title": "ALSO ON THEIR SHELVES",
-            "subtitle": "Books and music your friends are picking up",
-            "items": _section_other_shelves(me_id, friend_ids, owned),
-        },
-    ]
+    if friend_ids:
+        activity, shown_keys = _build_activity(friend_ids, owned)
+    else:
+        activity, shown_keys = [], set()
+    suggestions = _build_suggestions(friend_ids, owned, user_genres, shown_keys)
+    items = _interleave(activity, suggestions, SUGGESTION_EVERY)
 
     return jsonify({
-        "sections": sections,
+        "items": items,
         "has_friends": len(friend_ids) > 0,
         "has_genres": len(user_genres) > 0,
     }), 200
