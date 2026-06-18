@@ -97,6 +97,18 @@ def run_migrations_online():
     connectable = get_engine()
 
     with connectable.connect() as connection:
+        # SQLite: batch (table-rebuild) migrations on a table that other tables
+        # reference via foreign keys fail while FK enforcement is on. The app
+        # turns FK enforcement ON for every connection (see app.py); turn it
+        # back OFF here for the duration of the migration, on the raw DBAPI
+        # cursor (outside any transaction, exactly how app.py sets it) so the
+        # PRAGMA actually takes effect.
+        if connection.dialect.name == "sqlite":
+            raw = connection.connection.dbapi_connection
+            cur = raw.cursor()
+            cur.execute("PRAGMA foreign_keys=OFF")
+            cur.close()
+
         context.configure(
             connection=connection,
             target_metadata=get_metadata(),
