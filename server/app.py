@@ -36,6 +36,7 @@ from iap_routes import iap_bp
 from discussion_routes import discussion_bp
 from push_routes import push_bp
 from wrapped_routes import wrapped_bp
+from legal_routes import legal_bp
 
 
 app = Flask(__name__)
@@ -53,6 +54,7 @@ app.register_blueprint(iap_bp)
 app.register_blueprint(discussion_bp)
 app.register_blueprint(push_bp)
 app.register_blueprint(wrapped_bp)
+app.register_blueprint(legal_bp)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 db.init_app(app)
