@@ -76,11 +76,11 @@ Each ladder has a name + motif icon; each tier has its own name + badge.
 | 5 | 32 | Ride or Die | 13 |
 | 6 | 52 | Charter Member | 15 |
 
-### 🎵 On Repeat — songs listened (BLOCKED: needs songs)
+### 🎵 On Repeat — songs listened
 First Spin (5) / B-Side (25) / Heavy Rotation (50) / Mixtape Maker (100) /
 Crate Digger (200) / Audiophile (350)
 
-### 📚 The Reading Room — books finished (BLOCKED: needs books)
+### 📚 The Reading Room — books finished
 First Chapter (5) / Bookmarked (25) / Page Turner (50) / Shelf Reader (100) /
 Bookworm (200) / Well-Read (350)
 

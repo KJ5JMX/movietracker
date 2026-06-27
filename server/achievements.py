@@ -76,14 +76,14 @@ LADDERS = [
     },
     {
         "key": "on_repeat", "name": "On Repeat", "motif": "cassette",
-        "metric": "listened", "blocked": True,
+        "metric": "listened", "blocked": False,
         "tiers": _tiers((5, "First Spin"), (25, "B-Side"), (50, "Heavy Rotation"),
                         (100, "Mixtape Maker"), (200, "Crate Digger"),
                         (350, "Audiophile")),
     },
     {
         "key": "reading_room", "name": "The Reading Room", "motif": "book",
-        "metric": "books", "blocked": True,
+        "metric": "books", "blocked": False,
         "tiers": _tiers((5, "First Chapter"), (25, "Bookmarked"),
                         (50, "Page Turner"), (100, "Shelf Reader"),
                         (200, "Bookworm"), (350, "Well-Read")),

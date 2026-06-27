@@ -64,8 +64,8 @@ short easy one; seasons brought down to reachable; reviewer dropped).
 - [DECIDED] Movie nights: 1 / 4 / 8 / 16 / 32 / 52
 - [DECIDED] Battles: 6 / 12 / 18 / 24 / 28 / 32
 - [DECIDED] Movie of the Week: 1 / 4 / 8 / 16 / 32 / 52
-- [BLOCKED] Listened: mirrors Watched — needs songs built
-- [BLOCKED] Books: mirrors Watched — needs books built
+- [DECIDED] Listened (songs): mirrors Watched — live
+- [DECIDED] Books: mirrors Watched — live
 - [DROPPED] Reviewer-by-count — re-opens the "good"-review farm. Revisit only if
   a non-farmable version is found (e.g. count reviews only on watched+rated items
   that a friend actually engaged with).
