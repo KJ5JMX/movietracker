@@ -83,3 +83,16 @@ class Config:
         for s in os.environ.get("GOOGLE_CLIENT_IDS", "").split(",")
         if s.strip()
     ]
+
+    # ShelfMates Movie Fest admin panel (/admin). Protected at the edge by
+    # Cloudflare Access; the app double-checks the authenticated email Cloudflare
+    # injects against this allowlist. ADMIN_TOKEN is a local-only fallback for
+    # hitting /admin directly on the box (e.g. curl) without Cloudflare in front.
+    #   ADMIN_EMAILS: comma-separated emails allowed into /admin
+    #   ADMIN_TOKEN:  optional shared secret accepted via X-Admin-Token header
+    ADMIN_EMAILS = [
+        s.strip().lower()
+        for s in os.environ.get("ADMIN_EMAILS", "").split(",")
+        if s.strip()
+    ]
+    ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN")

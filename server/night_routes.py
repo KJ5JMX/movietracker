@@ -14,7 +14,7 @@ Endpoints:
 """
 
 import random
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
@@ -29,6 +29,7 @@ from models import (
     MovieNightSession,
     MovieNightParticipant,
 )
+from watchlist_routes import _parse_release_date
 
 
 night_bp = Blueprint("night", __name__, url_prefix="/night")
@@ -137,6 +138,7 @@ def _scored_candidates(user_ids, media_type, max_runtime, mood):
             "poster": it.poster,
             "genre": it.genre,
             "runtime_minutes": it.runtime_minutes,
+            "released": it.released,
             "wanted_by": set(),   # user_ids who have watch_status='want_to_watch'
             "watched_by": set(),  # user_ids who have watch_status='watched'
         })
@@ -147,6 +149,8 @@ def _scored_candidates(user_ids, media_type, max_runtime, mood):
             bucket["genre"] = it.genre
         if not bucket["runtime_minutes"] and it.runtime_minutes:
             bucket["runtime_minutes"] = it.runtime_minutes
+        if not bucket["released"] and it.released:
+            bucket["released"] = it.released
         if it.watch_status == "watched":
             bucket["watched_by"].add(it.user_id)
         else:
@@ -161,6 +165,11 @@ def _scored_candidates(user_ids, media_type, max_runtime, mood):
         # If nobody actively WANTS this (everyone has it as watched but not full overlap),
         # still allow it through with low weight — but skip if literally no want_to_watch
         if not b["wanted_by"]:
+            continue
+        # Skip titles that aren't out yet — you can't watch tonight what hasn't
+        # released. (Items can be on a list with a "remind me on release" set.)
+        release_date = _parse_release_date(b["released"])
+        if release_date and release_date > date.today():
             continue
         # Runtime filter: if max provided AND we know the runtime AND it's over, skip
         if max_runtime and b["runtime_minutes"] and b["runtime_minutes"] > max_runtime:

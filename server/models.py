@@ -52,6 +52,13 @@ class User(db.Model):
     onboarded = db.Column(
         db.Boolean, default=True, server_default="1", nullable=False
     )
+    # Gamification: cosmetic "plot points" balance, the equipped flair title, and
+    # whether to show points + flair next to the user's name.
+    points = db.Column(db.Integer, default=0, server_default="0", nullable=False)
+    flair_selected = db.Column(db.String, nullable=True)  # flair key, or null
+    show_flair = db.Column(
+        db.Boolean, default=True, server_default="1", nullable=False
+    )
 
     @property
     def is_pro(self):
@@ -341,4 +348,206 @@ class MovieNightParticipant(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint("session_id", "user_id", name="uq_session_user"),
+    )
+
+
+class StreamingAvailabilityReport(db.Model):
+    """Crowdsourced "where can I watch this" data.
+
+    One row per (imdb_id, country, platform). Users report a platform when they
+    rate something they watched; other users see the report on the detail screen
+    with its age ("reported on Netflix, 3 weeks ago") and can confirm it's still
+    there or flag it removed. last_confirmed_at is the freshness signal — every
+    confirm bumps it, so stale reports are visibly old rather than silently wrong.
+
+    Country matters because streaming rights are regional; defaults to US for now
+    since that's the only region being curated. Cheating is low-value by design:
+    the data unlocks nothing, so there's no incentive to fake reports.
+    """
+
+    __tablename__ = "streaming_availability_reports"
+
+    id = db.Column(db.Integer, primary_key=True)
+    imdb_id = db.Column(db.String, nullable=False, index=True)
+    country = db.Column(
+        db.String, default="US", server_default="US", nullable=False
+    )
+    platform = db.Column(db.String, nullable=False)  # netflix|hulu|amazon|hbo|disney|other
+    reported_by_user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", name="fk_streaming_report_user"),
+        nullable=True,
+    )
+    # active flips False when a user flags the title as removed; a fresh report
+    # re-activates the same row rather than creating a duplicate.
+    active = db.Column(
+        db.Boolean, default=True, server_default="1", nullable=False
+    )
+    confirm_count = db.Column(
+        db.Integer, default=1, server_default="1", nullable=False
+    )
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    last_confirmed_at = db.Column(
+        db.DateTime, default=datetime.utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "imdb_id", "country", "platform", name="uq_report_title_country_platform"
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# ShelfMates Movie Fest — admin-curated Movie of the Week + monthly Battles.
+# All curation is hand-set by the admin (no crowd needed); the curated
+# `streaming` field is the authoritative where-to-watch for festival titles,
+# stored as a JSON list of platform values (netflix|hulu|amazon|hbo|disney|other).
+# ---------------------------------------------------------------------------
+
+
+class MovieOfWeek(db.Model):
+    """One curated pick per week. Users complete it (watch + rate + review)
+    without adding it to their list; completing it records the completion and
+    creates a watched WatchlistItem so it shows in their library + discovery."""
+
+    __tablename__ = "movies_of_week"
+
+    id = db.Column(db.Integer, primary_key=True)
+    week_key = db.Column(db.String, nullable=False, unique=True)  # ISO week "2026-W27"
+    imdb_id = db.Column(db.String, nullable=False)
+    title = db.Column(db.String, nullable=False)
+    year = db.Column(db.String)
+    poster = db.Column(db.String)
+    media_type = db.Column(
+        db.String, default="movie", server_default="movie", nullable=False
+    )
+    blurb = db.Column(db.String)  # optional admin note shown on the Fest page
+    streaming = db.Column(db.Text)  # JSON list of platform values (admin-entered)
+    active = db.Column(db.Boolean, default=True, server_default="1", nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+
+class MovieOfWeekCompletion(db.Model):
+    """One row per (movie-of-week, user) once they finish it."""
+
+    __tablename__ = "movie_of_week_completions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    mow_id = db.Column(
+        db.Integer,
+        db.ForeignKey("movies_of_week.id", name="fk_mow_completion_mow"),
+        nullable=False,
+        index=True,
+    )
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", name="fk_mow_completion_user"),
+        nullable=False,
+        index=True,
+    )
+    rating = db.Column(db.Integer)  # 1-5
+    review = db.Column(db.Text)
+    completed_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint("mow_id", "user_id", name="uq_mow_user"),
+    )
+
+
+class Battle(db.Model):
+    """A head-to-head between two curated movies (monthly). Users rate/review
+    both, then vote; the winner is surfaced in discovery as a battle pick. Two
+    movies are inlined (a_*/b_*) since a battle is always exactly two."""
+
+    __tablename__ = "battles"
+
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String, nullable=False)  # e.g. "July Battle"
+
+    a_imdb_id = db.Column(db.String, nullable=False)
+    a_title = db.Column(db.String, nullable=False)
+    a_year = db.Column(db.String)
+    a_poster = db.Column(db.String)
+    a_streaming = db.Column(db.Text)  # JSON platform list
+
+    b_imdb_id = db.Column(db.String, nullable=False)
+    b_title = db.Column(db.String, nullable=False)
+    b_year = db.Column(db.String)
+    b_poster = db.Column(db.String)
+    b_streaming = db.Column(db.Text)
+
+    ends_at = db.Column(db.DateTime, nullable=False)  # countdown deadline
+    active = db.Column(db.Boolean, default=True, server_default="1", nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+
+class BattleVote(db.Model):
+    """One vote per (battle, user). choice is 'a' or 'b'."""
+
+    __tablename__ = "battle_votes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    battle_id = db.Column(
+        db.Integer,
+        db.ForeignKey("battles.id", name="fk_battle_vote_battle"),
+        nullable=False,
+        index=True,
+    )
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", name="fk_battle_vote_user"),
+        nullable=False,
+        index=True,
+    )
+    choice = db.Column(db.String, nullable=False)  # "a" | "b"
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint("battle_id", "user_id", name="uq_battle_user"),
+    )
+
+
+class UserAchievement(db.Model):
+    """One row per (user, ladder, tier) once earned. Points were granted at the
+    moment of earning (added to User.points)."""
+
+    __tablename__ = "user_achievements"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", name="fk_user_achievement_user"),
+        nullable=False,
+        index=True,
+    )
+    ladder_key = db.Column(db.String, nullable=False)
+    tier = db.Column(db.Integer, nullable=False)
+    earned_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "user_id", "ladder_key", "tier", name="uq_user_ladder_tier"
+        ),
+    )
+
+
+class UserFlair(db.Model):
+    """A flair title a user has bought with points. Owned forever once purchased;
+    User.flair_selected points at the one currently shown."""
+
+    __tablename__ = "user_flair"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", name="fk_user_flair_user"),
+        nullable=False,
+        index=True,
+    )
+    flair_key = db.Column(db.String, nullable=False)
+    purchased_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "flair_key", name="uq_user_flair"),
     )

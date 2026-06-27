@@ -37,6 +37,9 @@ from discussion_routes import discussion_bp
 from push_routes import push_bp
 from wrapped_routes import wrapped_bp
 from legal_routes import legal_bp
+from streaming_routes import streaming_bp
+from festival_routes import festival_bp, admin_bp
+from gamification_routes import gam_bp
 
 
 app = Flask(__name__)
@@ -55,6 +58,10 @@ app.register_blueprint(discussion_bp)
 app.register_blueprint(push_bp)
 app.register_blueprint(wrapped_bp)
 app.register_blueprint(legal_bp)
+app.register_blueprint(streaming_bp)
+app.register_blueprint(festival_bp)
+app.register_blueprint(admin_bp)
+app.register_blueprint(gam_bp)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 db.init_app(app)
