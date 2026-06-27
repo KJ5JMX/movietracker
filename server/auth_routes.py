@@ -16,6 +16,7 @@ import jwt
 from jwt import PyJWKClient
 from config import Config
 from email_utils import send_email, password_reset_email
+from push import NOTIFICATION_CATEGORIES
 from models import (
     db,
     User,
@@ -128,6 +129,15 @@ def ensure_friend_code(user):
     raise RuntimeError("Could not generate a unique friend code")
 
 
+def _notif_settings(user):
+    """Full per-category toggle map, defaulting every category to on."""
+    try:
+        s = json.loads(user.notification_settings) if user.notification_settings else {}
+    except (ValueError, TypeError):
+        s = {}
+    return {cat: bool(s.get(cat, True)) for cat in NOTIFICATION_CATEGORIES}
+
+
 def user_to_dict(user):
     return {
         "id": user.id,
@@ -136,6 +146,7 @@ def user_to_dict(user):
         "display_name": user.display_name,
         "friend_code": user.friend_code,
         "notification_prefs": user.notification_prefs,
+        "notification_settings": _notif_settings(user),
         "privacy_mode": user.privacy_mode,
         "dark_mode": bool(user.dark_mode),
         "pro_status": user.pro_status,
@@ -278,6 +289,20 @@ def update_me():
         if prefs not in ("all", "mentions", "none"):
             return jsonify({"message": "Invalid notification_prefs"}), 400
         user.notification_prefs = prefs
+
+    if "notification_settings" in data:
+        ns = data["notification_settings"]
+        if not isinstance(ns, dict):
+            return jsonify({"message": "Invalid notification_settings"}), 400
+        try:
+            existing = json.loads(user.notification_settings) if user.notification_settings else {}
+        except (ValueError, TypeError):
+            existing = {}
+        # Merge in only known categories so partial updates work.
+        for cat in NOTIFICATION_CATEGORIES:
+            if cat in ns:
+                existing[cat] = bool(ns[cat])
+        user.notification_settings = json.dumps(existing)
 
     if "privacy_mode" in data:
         mode = data["privacy_mode"]

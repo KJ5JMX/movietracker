@@ -30,6 +30,7 @@ from models import (
     MovieNightParticipant,
 )
 from watchlist_routes import _parse_release_date
+from achievements import sync_and_notify
 
 
 night_bp = Blueprint("night", __name__, url_prefix="/night")
@@ -364,7 +365,8 @@ def schedule_night():
     when_label = str(data.get("when_label") or "").strip()[:40]
     when = when_label or _fmt_when(scheduled_for) + " UTC"
     notify(invitees, "Movie Night invite",
-           f"{host_name} planned a movie night \u00b7 {when}")
+           f"{host_name} planned a movie night \u00b7 {when}",
+           category="movie_nights")
     return jsonify(_serialize_session(session, me_id)), 201
 
 
@@ -422,7 +424,8 @@ def create_session():
                 if p.user_id != me_id
             ]
             notify(others, "Movie Night is starting",
-                   f"{host_name} picked: {title}")
+                   f"{host_name} picked: {title}",
+                   category="movie_nights")
             return jsonify(_serialize_session(existing, me_id)), 200
 
     session = MovieNightSession(
@@ -446,7 +449,8 @@ def create_session():
     host_name = me.display_name or me.username
     invitees = [uid for uid in user_ids if uid != me_id]
     notify(invitees, "Movie Night",
-           f"{host_name} started a movie night: {title}")
+           f"{host_name} started a movie night: {title}",
+           category="movie_nights")
     return jsonify(_serialize_session(session, me_id)), 201
 
 
@@ -568,7 +572,8 @@ def edit_scheduled_night(session_id):
         _fmt_when(session.scheduled_for) + " UTC" if session.scheduled_for else ""
     )
     notify(others, "Movie Night updated",
-           f"{host_name} changed the plan · {when}".strip(" · "))
+           f"{host_name} changed the plan · {when}".strip(" · "),
+           category="movie_nights")
     return jsonify(_serialize_session(session, me_id)), 200
 
 
@@ -599,7 +604,8 @@ def cancel_scheduled_night(session_id):
     db.session.commit()
 
     host_name = me.display_name or me.username
-    notify(others, "Movie Night canceled", f"{host_name} called off the movie night")
+    notify(others, "Movie Night canceled", f"{host_name} called off the movie night",
+           category="movie_nights")
     return jsonify({"message": "Movie night canceled", "id": session_id}), 200
 
 
@@ -665,4 +671,5 @@ def rate_session(session_id):
         db.session.add(item)
 
     db.session.commit()
+    sync_and_notify(me_id)
     return jsonify(_serialize_session(session, me_id)), 200

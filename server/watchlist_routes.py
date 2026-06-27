@@ -4,6 +4,7 @@ from datetime import date, datetime
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import db, WatchlistItem, User
+from achievements import sync_and_notify
 
 
 # OMDb returns release dates in formats like:
@@ -216,6 +217,7 @@ def add_to_watchlist():
     db.session.add(new_item)
     db.session.commit()
 
+    sync_and_notify(user_id)
     return jsonify(item_to_dict(new_item)), 201
 
 
@@ -271,6 +273,7 @@ def update_watchlist_item(item_id):
             item.runtime_minutes = parsed
     db.session.commit()
 
+    sync_and_notify(user_id)
     return jsonify(item_to_dict(item)), 200
 
 

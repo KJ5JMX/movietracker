@@ -33,6 +33,7 @@ from sqlalchemy import or_, and_
 
 from push import notify
 from models import db, User, Friendship, Recommendation, ReviewShare, WatchlistItem
+from achievements import sync_and_notify
 
 
 social_bp = Blueprint("social", __name__)
@@ -201,7 +202,8 @@ def send_friend_request():
                 db.session.commit()
                 me = User.query.get(me_id)
                 notify([existing.requester_id], "Friend request accepted",
-                       f"{_push_name(me)} accepted your friend request")
+                       f"{_push_name(me)} accepted your friend request",
+                       category="friend_requests")
                 return jsonify({
                     "message": "Friend request accepted",
                     "friendship": friendship_to_dict(existing, me_id),
@@ -217,7 +219,8 @@ def send_friend_request():
     db.session.commit()
     me = User.query.get(me_id)
     notify([target.id], "New friend request",
-           f"{_push_name(me)} wants to be shelf mates")
+           f"{_push_name(me)} wants to be shelf mates",
+           category="friend_requests")
     return jsonify({
         "message": "Friend request sent",
         "friendship_id": f.id,
@@ -239,7 +242,8 @@ def accept_friend_request(friendship_id):
     db.session.commit()
     me = User.query.get(me_id)
     notify([f.requester_id], "Friend request accepted",
-           f"{_push_name(me)} accepted your friend request")
+           f"{_push_name(me)} accepted your friend request",
+           category="friend_requests")
     return jsonify(friendship_to_dict(f, me_id)), 200
 
 
@@ -434,7 +438,9 @@ def send_rec():
     db.session.commit()
     me = User.query.get(me_id)
     rec_body = rec.title if not rec.note else f"{rec.title} \u00b7 \u201c{rec.note}\u201d"
-    notify([to_user_id], f"Rec from {_push_name(me)}", rec_body)
+    notify([to_user_id], f"Rec from {_push_name(me)}", rec_body,
+           category="recommendations")
+    sync_and_notify(me_id)
     return jsonify(rec_to_dict(rec)), 201
 
 
@@ -460,7 +466,8 @@ def accept_rec(rec_id):
         db.session.commit()
         me = User.query.get(me_id)
         notify([rec.from_user_id], "Your rec landed",
-               f"{_push_name(me)} added {rec.title} to their shelf")
+               f"{_push_name(me)} added {rec.title} to their shelf",
+               category="recommendations")
         return jsonify({"message": "Item already in your list; attributed to friend"}), 200
 
     new_item = WatchlistItem(
@@ -481,7 +488,8 @@ def accept_rec(rec_id):
     db.session.commit()
     me = User.query.get(me_id)
     notify([rec.from_user_id], "Your rec landed",
-           f"{_push_name(me)} added {rec.title} to their shelf")
+           f"{_push_name(me)} added {rec.title} to their shelf",
+           category="recommendations")
 
     return jsonify({
         "message": "Added to your list",
@@ -580,7 +588,9 @@ def send_review():
     stars = ("\u2605" * rating + " \u00b7 ") if rating else ""
     snippet = (review.review_text[:80] if review.review_text else title)
     notify([to_user_id], f"{_push_name(me)} rated {title}",
-           f"{stars}{snippet}")
+           f"{stars}{snippet}",
+           category="ratings")
+    sync_and_notify(me_id)
     return jsonify(review_to_dict(review)), 201
 
 

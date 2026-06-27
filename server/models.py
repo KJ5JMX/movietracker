@@ -22,6 +22,9 @@ class User(db.Model):
     display_name = db.Column(db.String)
     friend_code = db.Column(db.String, index=True)
     notification_prefs = db.Column(db.String, default="all", server_default="all")
+    # Per-category push toggles, JSON like {"friend_requests": true, ...}.
+    # Missing keys default to enabled.
+    notification_settings = db.Column(db.Text, nullable=True)
     privacy_mode = db.Column(db.String, default="friends", server_default="friends")
     dark_mode = db.Column(db.Boolean, default=False, server_default="0")
     # Pro entitlement: free | comp | paid | trial.

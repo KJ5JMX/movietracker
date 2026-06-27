@@ -226,6 +226,25 @@ def sync_achievements(user_id):
     return newly
 
 
+def sync_and_notify(user_id):
+    """Award newly-earned tiers AND push an 'achievements' notification for them,
+    so the user hears about an unlock the moment it happens — no need to open the
+    Achievements screen. Safe to call after any activity-changing commit."""
+    newly = sync_achievements(user_id)
+    if newly:
+        try:
+            from push import notify
+            names = ", ".join(n["name"] for n in newly)
+            title = "Badge unlocked" if len(newly) == 1 else "Badges unlocked"
+            notify(
+                [user_id], title, names,
+                category="achievements", data={"type": "achievement"},
+            )
+        except Exception as e:
+            print(f"[achievements] notify failed: {e}")
+    return newly
+
+
 def award_points(user_id, amount):
     """Direct point grant for bounded events (Movie of the Week / battle rating)."""
     from models import db, User

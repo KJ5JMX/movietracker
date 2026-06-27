@@ -37,6 +37,7 @@ def _release_reminders():
             "Out now",
             f"{item.title} is out · the {kind} on your shelf released today",
             app=app,
+            category="reminders",
         )
         item.release_reminded = True
     if candidates:
@@ -63,6 +64,7 @@ def _night_reminders():
             "Movie Night soon",
             "Your movie night starts within the hour",
             app=app,
+            category="movie_nights",
         )
         s.reminder_sent = True
     if sessions:

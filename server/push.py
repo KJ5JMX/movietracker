@@ -13,6 +13,7 @@ configured, so dev environments and the test suite never need real keys,
 and a push failure can never break the request that triggered it.
 """
 
+import json
 import threading
 import time
 
@@ -20,7 +21,29 @@ import jwt  # PyJWT (already a flask-jwt-extended dependency)
 from flask import current_app
 
 from config import Config
-from models import db, DeviceToken
+from models import db, DeviceToken, User
+
+# Canonical notification categories. The app renders a toggle per category;
+# notify() filters recipients who've turned a category off. Missing = on.
+NOTIFICATION_CATEGORIES = [
+    "friend_requests",
+    "recommendations",
+    "ratings",
+    "movie_nights",
+    "discussions",
+    "reminders",
+    "achievements",
+]
+
+
+def _user_allows(user, category):
+    if not category:
+        return True
+    try:
+        settings = json.loads(user.notification_settings) if user.notification_settings else {}
+    except (ValueError, TypeError):
+        settings = {}
+    return settings.get(category, True)  # default ON
 
 # Apple wants provider JWTs refreshed between 20 and 60 minutes
 _TOKEN_TTL_SECONDS = 40 * 60
@@ -116,16 +139,27 @@ def _send_android(app, tokens, title, body, data):
     pass
 
 
-def notify(user_ids, title, body, data=None, app=None):
+def notify(user_ids, title, body, data=None, app=None, category=None):
     """Fan a notification out to every registered device of the given users.
 
     Safe to call from request handlers (uses current_app) or from the jobs
     process (pass app explicitly). Network I/O happens on a daemon thread so
     the caller never blocks on Apple.
+
+    If `category` is given, recipients who've turned that category off in their
+    notification settings are filtered out first.
     """
     if not user_ids:
         return
     try:
+        if category:
+            users = User.query.filter(
+                User.id.in_(list(set(user_ids)))
+            ).all()
+            allowed = {u.id for u in users if _user_allows(u, category)}
+            user_ids = [uid for uid in user_ids if uid in allowed]
+            if not user_ids:
+                return
         flask_app = app or current_app._get_current_object()
         rows = DeviceToken.query.filter(
             DeviceToken.user_id.in_(list(set(user_ids)))

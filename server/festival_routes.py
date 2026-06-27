@@ -33,7 +33,7 @@ from models import (
 )
 from movie_routes import _omdb_search_forgiving
 from streaming_routes import ALLOWED_PLATFORMS
-from achievements import award_points
+from achievements import award_points, sync_and_notify
 
 # Points granted for the bounded, cheat-proof events (once each).
 MOW_RATING_POINTS = 2
@@ -239,6 +239,7 @@ def complete_movie_of_week():
     # Points only on the first completion (cheat-proof: bounded, once per pick).
     if first_completion:
         award_points(user_id, MOW_RATING_POINTS)
+    sync_and_notify(user_id)
 
     return jsonify({"movie_of_week": _mow_to_dict(mow, completion)}), 200
 
@@ -300,6 +301,7 @@ def vote_battle(battle_id):
     # Points only on the first vote per battle (changing your vote earns nothing).
     if first_vote:
         award_points(user_id, BATTLE_RATING_POINTS)
+    sync_and_notify(user_id)
 
     return jsonify(
         _battle_to_dict(battle, choice, _vote_counts(battle_id))

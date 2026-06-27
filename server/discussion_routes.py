@@ -210,6 +210,7 @@ def post_comment(media_type, external_id):
             [it.user_id for it in eligible],
             f"{poster_name} \u00b7 {book_title} ch {chapter}",
             comment.body[:100],
+            category="discussions",
         )
     return jsonify({
         "id": comment.id,
