@@ -22,7 +22,9 @@ streaming_bp = Blueprint("streaming", __name__, url_prefix="/streaming")
 # Fixed set keeps the data clean (no "Netflix" vs "netflix" vs "NF" sprawl).
 # Mobile sends one of these; anything else is rejected.
 ALLOWED_PLATFORMS = {
-    "netflix", "hulu", "amazon", "hbo", "disney", "appletv", "other"
+    "netflix", "hulu", "amazon", "hbo", "disney", "appletv",
+    "paramount", "peacock", "starz", "showtime", "amc", "tubi", "crunchyroll",
+    "other",
 }
 DEFAULT_COUNTRY = "US"
 

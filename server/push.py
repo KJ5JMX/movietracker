@@ -33,6 +33,7 @@ NOTIFICATION_CATEGORIES = [
     "discussions",
     "reminders",
     "achievements",
+    "festival",
 ]
 
 

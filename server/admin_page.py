@@ -19,6 +19,8 @@ ADMIN_PAGE_HTML = r"""<!DOCTYPE html>
   h1 { font-size:22px; letter-spacing:1px; }
   h2 { font-size:15px; letter-spacing:2px; text-transform:uppercase;
     color:var(--amber); margin-top:0; }
+  h3 { font-size:13px; letter-spacing:1px; text-transform:uppercase;
+    color:var(--muted); margin:14px 0 6px; }
   .wrap { max-width:880px; margin:0 auto; }
   .card { background:var(--card); border:2px solid var(--border);
     border-radius:10px; padding:18px; margin-bottom:22px; }
@@ -32,6 +34,7 @@ ADMIN_PAGE_HTML = r"""<!DOCTYPE html>
   button.ghost { background:transparent; color:var(--muted);
     border:2px solid var(--border); }
   button.amber { background:var(--amber); color:#3a2410; }
+  button.small { padding:6px 10px; font-size:12px; }
   .results { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
   .res { width:120px; cursor:pointer; border:2px solid var(--border);
     border-radius:8px; padding:6px; background:var(--bg); }
@@ -50,9 +53,14 @@ ADMIN_PAGE_HTML = r"""<!DOCTYPE html>
   .col { flex:1; }
   .msg { font-size:13px; margin-top:8px; min-height:18px; }
   .ok { color:var(--green); } .err { color:var(--danger); }
-  .current { font-size:13px; color:var(--muted); }
-  .battle-row { border-bottom:1px solid var(--border); padding:8px 0;
-    font-size:13px; display:flex; justify-content:space-between; align-items:center; }
+  .current { font-size:14px; color:var(--ink); margin-bottom:6px; }
+  .current b { color:var(--amber); }
+  .dash-row { border-bottom:1px solid var(--border); padding:10px 0;
+    font-size:13px; display:flex; justify-content:space-between;
+    align-items:center; gap:10px; flex-wrap:wrap; }
+  .dash-actions { display:flex; gap:8px; flex-wrap:wrap; }
+  .pill { background:var(--green); color:#10261c; border-radius:10px;
+    padding:1px 8px; font-size:11px; font-weight:700; margin-left:6px; }
 </style>
 </head>
 <body>
@@ -63,21 +71,20 @@ ADMIN_PAGE_HTML = r"""<!DOCTYPE html>
   <div class="card">
     <h2>Movie of the Week</h2>
     <div class="current" id="motm-current">Loading current pick...</div>
-    <label>Search a movie</label>
-    <input type="text" id="motm-q" placeholder="e.g. The Shawshank Redemption" />
+    <div style="margin-bottom:10px">
+      <button class="ghost small" id="motm-notify">Notify users of this pick</button>
+    </div>
+    <label>Search a movie (or edit the current pick below)</label>
+    <input type="text" id="motm-q" placeholder="e.g. The Big Lebowski" />
     <div class="results" id="motm-results"></div>
     <div id="motm-chosen"></div>
     <label>Where to stream (you verify before pushing)</label>
     <div class="plats" id="motm-plats"></div>
-    <div class="row">
-      <div class="col">
-        <label>Week (YYYY-Www, blank = this week)</label>
-        <input type="text" id="motm-month" placeholder="2026-W27" />
-      </div>
-    </div>
+    <label>Week (YYYY-Www, blank = this week)</label>
+    <input type="text" id="motm-month" placeholder="2026-W27" />
     <label>Blurb (optional)</label>
-    <textarea id="motm-blurb" placeholder="Why this one this month..."></textarea>
-    <div style="margin-top:12px"><button id="motm-save">Set Movie of the Month</button></div>
+    <textarea id="motm-blurb" placeholder="Why this one this week..."></textarea>
+    <div style="margin-top:12px"><button id="motm-save">Save Movie of the Week</button></div>
     <div class="msg" id="motm-msg"></div>
   </div>
 
@@ -88,14 +95,14 @@ ADMIN_PAGE_HTML = r"""<!DOCTYPE html>
     <input type="text" id="b-title" placeholder="July Battle" />
     <div class="row">
       <div class="col">
-        <h2 style="font-size:13px">Movie A</h2>
+        <h3>Movie A</h3>
         <input type="text" id="ba-q" placeholder="Search movie A" />
         <div class="results" id="ba-results"></div>
         <div id="ba-chosen"></div>
         <div class="plats" id="ba-plats"></div>
       </div>
       <div class="col">
-        <h2 style="font-size:13px">Movie B</h2>
+        <h3>Movie B</h3>
         <input type="text" id="bb-q" placeholder="Search movie B" />
         <div class="results" id="bb-results"></div>
         <div id="bb-chosen"></div>
@@ -106,25 +113,44 @@ ADMIN_PAGE_HTML = r"""<!DOCTYPE html>
     <input type="number" id="b-days" value="30" min="1" max="90" />
     <div style="margin-top:12px"><button class="amber" id="b-save">Create Battle</button></div>
     <div class="msg" id="b-msg"></div>
-    <h2 style="margin-top:18px; font-size:13px">Active battles</h2>
-    <div id="b-list"></div>
+  </div>
+
+  <!-- DASHBOARD -->
+  <div class="card">
+    <h2>Dashboard</h2>
+    <h3>Movie of the Week — history</h3>
+    <div id="dash-weeks">Loading...</div>
+    <h3 style="margin-top:18px">Battles</h3>
+    <div id="dash-battles">Loading...</div>
+    <div class="msg" id="dash-msg"></div>
   </div>
 </div>
 
 <script>
-const PLATFORMS = ["netflix","hulu","amazon","hbo","disney","appletv","other"];
-const LABELS = {netflix:"Netflix",hulu:"Hulu",amazon:"Amazon",hbo:"HBO",disney:"Disney+",appletv:"Apple TV",other:"Other"};
+const PLATFORMS = ["netflix","hulu","amazon","hbo","disney","appletv","paramount","peacock","starz","showtime","amc","tubi","crunchyroll","other"];
+const LABELS = {netflix:"Netflix",hulu:"Hulu",amazon:"Amazon",hbo:"HBO",disney:"Disney+",appletv:"Apple TV",paramount:"Paramount+",peacock:"Peacock",starz:"Starz",showtime:"Showtime",amc:"AMC+",tubi:"Tubi",crunchyroll:"Crunchyroll",other:"Other"};
 
+// Throws on any non-OK response so failures are visible instead of silent.
 async function api(path, opts={}) {
   const r = await fetch("/admin/api" + path, {
     headers: {"Content-Type":"application/json"},
     ...opts,
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
+  if (!r.ok) {
+    let m = "Error " + r.status;
+    try { const j = await r.json(); if (j && j.message) m = j.message; } catch (e) {}
+    throw new Error(m);
+  }
   return r.json();
 }
+function setMsg(id, text, ok) {
+  const el = document.getElementById(id);
+  el.className = "msg " + (ok ? "ok" : "err");
+  el.textContent = text;
+}
 
-// Generic movie-search widget bound to a state object.
+// Movie-search widget bound to a state object.
 function makeSearch(qId, resultsId, chosenId, platsId, state) {
   const q = document.getElementById(qId);
   const results = document.getElementById(resultsId);
@@ -146,14 +172,30 @@ function makeSearch(qId, resultsId, chosenId, platsId, state) {
       plats.appendChild(el);
     });
   }
+  function showChosen(m) {
+    chosen.innerHTML = m
+      ? '<div class="chosen"><img src="' + (m.poster||"") +
+        '"/><span>Selected: <b>' + m.title + '</b> (' + (m.year||"?") + ')</span></div>'
+      : "";
+  }
   renderPlats();
+
+  // Lets the caller prefill the form for editing an existing pick.
+  state.setSelection = (movie, platformList) => {
+    state.movie = movie;
+    state.platforms = new Set(platformList || []);
+    showChosen(movie);
+    renderPlats();
+  };
 
   let timer = null;
   q.addEventListener("input", () => {
     clearTimeout(timer);
     timer = setTimeout(async () => {
       if (!q.value.trim()) { results.innerHTML = ""; return; }
-      const data = await api("/search?q=" + encodeURIComponent(q.value));
+      let data = [];
+      try { data = await api("/search?q=" + encodeURIComponent(q.value)); }
+      catch (e) { return; }
       results.innerHTML = "";
       (data || []).slice(0, 8).forEach(m => {
         const el = document.createElement("div");
@@ -162,8 +204,7 @@ function makeSearch(qId, resultsId, chosenId, platsId, state) {
           '<div class="t">' + m.title + ' (' + (m.year || "?") + ')</div>';
         el.onclick = () => {
           state.movie = m;
-          chosen.innerHTML = '<div class="chosen"><img src="' + (m.poster||"") +
-            '"/><span>Selected: <b>' + m.title + '</b> (' + (m.year||"?") + ')</span></div>';
+          showChosen(m);
           [...results.children].forEach(c => c.classList.remove("sel"));
           el.classList.add("sel");
         };
@@ -179,29 +220,49 @@ function makeSearch(qId, resultsId, chosenId, platsId, state) {
   }) : null;
 }
 
-// ---- Movie of the Month ----
+// ---- Movie of the Week ----
 const motm = {};
 makeSearch("motm-q","motm-results","motm-chosen","motm-plats", motm);
 
 async function loadCurrentMotm() {
-  const d = await api("/movie-of-week");
   const el = document.getElementById("motm-current");
+  let d;
+  try { d = await api("/movie-of-week"); }
+  catch (e) { el.innerHTML = '<span class="err">Could not load: ' + e.message + '</span>'; return; }
   if (d.movie_of_week) {
     const m = d.movie_of_week;
-    el.textContent = "Current: " + m.title + " (" + (m.year||"?") + ") · " + m.week_key +
-      " · streaming: " + (m.streaming.map(p=>LABELS[p]).join(", ") || "none set");
-  } else { el.textContent = "No Movie of the Week set yet."; }
+    el.innerHTML = "Currently in progress: <b>" + m.title + "</b> (" + (m.year||"?") +
+      ") · week " + m.week_key + " · streaming: " +
+      (m.streaming.map(p=>LABELS[p]).join(", ") || "none set");
+    // Prefill the form so you can edit blurb / streaming mid-week and re-save.
+    motm.setSelection(
+      {imdb_id:m.imdb_id, title:m.title, year:m.year, poster:m.poster},
+      m.streaming);
+    document.getElementById("motm-month").value = m.week_key;
+    document.getElementById("motm-blurb").value = m.blurb || "";
+  } else {
+    el.textContent = "No Movie of the Week set yet.";
+  }
 }
 
 document.getElementById("motm-save").onclick = async () => {
-  const msg = document.getElementById("motm-msg");
   const p = motm.payload();
-  if (!p) { msg.className="msg err"; msg.textContent="Pick a movie first."; return; }
+  if (!p) { setMsg("motm-msg", "Pick a movie first.", false); return; }
   p.week_key = document.getElementById("motm-month").value.trim();
   p.blurb = document.getElementById("motm-blurb").value.trim();
-  const d = await api("/movie-of-week", {method:"POST", body:p});
-  if (d.movie_of_week) { msg.className="msg ok"; msg.textContent="Saved."; loadCurrentMotm(); }
-  else { msg.className="msg err"; msg.textContent = d.message || "Failed."; }
+  try {
+    await api("/movie-of-week", {method:"POST", body:p});
+    setMsg("motm-msg", "Saved.", true);
+    loadCurrentMotm();
+    loadDashboard();
+  } catch (e) { setMsg("motm-msg", e.message, false); }
+};
+
+document.getElementById("motm-notify").onclick = async () => {
+  try {
+    await api("/notify/movie-of-week", {method:"POST"});
+    setMsg("motm-msg", "Notification sent.", true);
+  } catch (e) { setMsg("motm-msg", e.message, false); }
 };
 
 // ---- Battle ----
@@ -209,40 +270,81 @@ const ba = {}, bb = {};
 makeSearch("ba-q","ba-results","ba-chosen","ba-plats", ba);
 makeSearch("bb-q","bb-results","bb-chosen","bb-plats", bb);
 
-async function loadBattles() {
-  const d = await api("/battles");
-  const list = document.getElementById("b-list");
-  list.innerHTML = "";
-  (d.battles || []).forEach(b => {
-    if (!b.active) return;
+document.getElementById("b-save").onclick = async () => {
+  const pa = ba.payload(), pb = bb.payload();
+  if (!pa || !pb) { setMsg("b-msg", "Pick both movies.", false); return; }
+  try {
+    await api("/battles", {method:"POST", body:{
+      title: document.getElementById("b-title").value.trim(),
+      movie_a: pa, movie_b: pb,
+      days: parseInt(document.getElementById("b-days").value) || 30,
+    }});
+    setMsg("b-msg", "Battle created.", true);
+    loadDashboard();
+  } catch (e) { setMsg("b-msg", e.message, false); }
+};
+
+// ---- Dashboard ----
+async function loadDashboard() {
+  let d;
+  try { d = await api("/dashboard"); }
+  catch (e) { setMsg("dash-msg", e.message, false); return; }
+  setMsg("dash-msg", "", true);
+
+  const weeks = document.getElementById("dash-weeks");
+  weeks.innerHTML = "";
+  if (!(d.movies_of_week || []).length) weeks.textContent = "No picks yet.";
+  (d.movies_of_week || []).forEach(m => {
     const row = document.createElement("div");
-    row.className = "battle-row";
-    row.innerHTML = "<span>" + b.title + ": <b>" + b.movie_a.title + "</b> (" +
-      b.movie_a.votes + ") vs <b>" + b.movie_b.title + "</b> (" + b.movie_b.votes +
-      ")" + (b.closed ? " · closed" : "") + "</span>";
-    const btn = document.createElement("button");
-    btn.className = "ghost"; btn.textContent = "Close";
-    btn.onclick = async () => { await api("/battles/"+b.id+"/close",{method:"POST"}); loadBattles(); };
-    row.appendChild(btn);
-    list.appendChild(row);
+    row.className = "dash-row";
+    row.innerHTML = "<span>" + m.week_key + " · <b>" + m.title + "</b> (" +
+      (m.year||"?") + ")" + (m.active ? '<span class="pill">current</span>' : "") +
+      "</span><span>" + m.completed + " completed</span>";
+    weeks.appendChild(row);
+  });
+
+  const battles = document.getElementById("dash-battles");
+  battles.innerHTML = "";
+  if (!(d.battles || []).length) battles.textContent = "No battles yet.";
+  (d.battles || []).forEach(b => {
+    const row = document.createElement("div");
+    row.className = "dash-row";
+    const status = b.closed ? "closed" : (b.active ? "voting open" : "ended");
+    const winner = b.winner ? (" · winner: " + b.winner) : (b.a_votes===b.b_votes ? " · tie" : "");
+    const info = document.createElement("span");
+    info.innerHTML = "<b>" + b.title + "</b>: " + b.a_title + " (" + b.a_votes +
+      ") vs " + b.b_title + " (" + b.b_votes + ") · " + status + winner;
+    const actions = document.createElement("div");
+    actions.className = "dash-actions";
+    const nNew = document.createElement("button");
+    nNew.className = "ghost small"; nNew.textContent = "Notify new";
+    nNew.onclick = async () => {
+      try { await api("/notify/battle/"+b.id, {method:"POST"}); setMsg("dash-msg","Sent.",true); }
+      catch (e) { setMsg("dash-msg", e.message, false); }
+    };
+    const nRes = document.createElement("button");
+    nRes.className = "ghost small"; nRes.textContent = "Notify result";
+    nRes.onclick = async () => {
+      try { await api("/notify/battle/"+b.id+"/result", {method:"POST"}); setMsg("dash-msg","Sent.",true); }
+      catch (e) { setMsg("dash-msg", e.message, false); }
+    };
+    actions.appendChild(nNew); actions.appendChild(nRes);
+    if (b.active) {
+      const close = document.createElement("button");
+      close.className = "ghost small"; close.textContent = "Close";
+      close.onclick = async () => {
+        try { await api("/battles/"+b.id+"/close",{method:"POST"}); loadDashboard(); }
+        catch (e) { setMsg("dash-msg", e.message, false); }
+      };
+      actions.appendChild(close);
+    }
+    row.appendChild(info); row.appendChild(actions);
+    battles.appendChild(row);
   });
 }
 
-document.getElementById("b-save").onclick = async () => {
-  const msg = document.getElementById("b-msg");
-  const pa = ba.payload(), pb = bb.payload();
-  if (!pa || !pb) { msg.className="msg err"; msg.textContent="Pick both movies."; return; }
-  const d = await api("/battles", {method:"POST", body:{
-    title: document.getElementById("b-title").value.trim(),
-    movie_a: pa, movie_b: pb,
-    days: parseInt(document.getElementById("b-days").value) || 30,
-  }});
-  if (d.id) { msg.className="msg ok"; msg.textContent="Battle created."; loadBattles(); }
-  else { msg.className="msg err"; msg.textContent = d.message || "Failed."; }
-};
-
 loadCurrentMotm();
-loadBattles();
+loadDashboard();
 </script>
 </body>
 </html>

@@ -25,6 +25,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from config import Config
 from models import (
     db,
+    User,
     WatchlistItem,
     MovieOfWeek,
     MovieOfWeekCompletion,
@@ -468,6 +469,93 @@ def admin_close_battle(battle_id):
     battle.active = False
     db.session.commit()
     return jsonify({"message": "Battle closed", "id": battle_id}), 200
+
+
+def _all_user_ids():
+    return [u.id for u in User.query.with_entities(User.id).all()]
+
+
+@admin_bp.route("/api/dashboard", methods=["GET"])
+@require_admin
+def admin_dashboard():
+    """History for the admin dashboard: each week's pick + how many completed it,
+    and each battle's vote split + winner."""
+    mows = MovieOfWeek.query.order_by(MovieOfWeek.week_key.desc()).all()
+    mow_rows = []
+    for m in mows:
+        completed = MovieOfWeekCompletion.query.filter_by(mow_id=m.id).count()
+        mow_rows.append({
+            "week_key": m.week_key, "title": m.title, "year": m.year,
+            "completed": completed, "active": bool(m.active),
+        })
+
+    battles = Battle.query.order_by(Battle.created_at.desc()).all()
+    b_rows = []
+    now = datetime.utcnow()
+    for b in battles:
+        c = _vote_counts(b.id)
+        winner = None
+        if c["a"] != c["b"]:
+            winner = b.a_title if c["a"] > c["b"] else b.b_title
+        b_rows.append({
+            "id": b.id, "title": b.title,
+            "a_title": b.a_title, "a_votes": c["a"],
+            "b_title": b.b_title, "b_votes": c["b"],
+            "winner": winner, "closed": now > b.ends_at, "active": bool(b.active),
+        })
+
+    return jsonify({"movies_of_week": mow_rows, "battles": b_rows}), 200
+
+
+@admin_bp.route("/api/notify/movie-of-week", methods=["POST"])
+@require_admin
+def admin_notify_mow():
+    mow = (
+        MovieOfWeek.query.filter_by(active=True)
+        .order_by(MovieOfWeek.week_key.desc()).first()
+    )
+    if not mow:
+        return jsonify({"message": "No active Movie of the Week"}), 404
+    from push import notify
+    notify(
+        _all_user_ids(), "New Movie of the Week", mow.title,
+        category="festival", data={"type": "movie_of_week"},
+    )
+    return jsonify({"message": "Notification sent"}), 200
+
+
+@admin_bp.route("/api/notify/battle/<int:battle_id>", methods=["POST"])
+@require_admin
+def admin_notify_battle(battle_id):
+    b = Battle.query.get(battle_id)
+    if not b:
+        return jsonify({"message": "Battle not found"}), 404
+    from push import notify
+    notify(
+        _all_user_ids(), "New Battle", f"{b.a_title} vs {b.b_title}",
+        category="festival", data={"type": "battle"},
+    )
+    return jsonify({"message": "Notification sent"}), 200
+
+
+@admin_bp.route("/api/notify/battle/<int:battle_id>/result", methods=["POST"])
+@require_admin
+def admin_notify_battle_result(battle_id):
+    b = Battle.query.get(battle_id)
+    if not b:
+        return jsonify({"message": "Battle not found"}), 404
+    c = _vote_counts(battle_id)
+    if c["a"] == c["b"]:
+        msg = f"{b.title}: it's a tie!"
+    else:
+        winner = b.a_title if c["a"] > c["b"] else b.b_title
+        msg = f"{winner} won {b.title}"
+    from push import notify
+    notify(
+        _all_user_ids(), "Battle results", msg,
+        category="festival", data={"type": "battle_result"},
+    )
+    return jsonify({"message": "Notification sent"}), 200
 
 
 # The admin page HTML is defined in admin_page.py to keep this file focused.
