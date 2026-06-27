@@ -269,20 +269,44 @@ document.getElementById("motm-notify").onclick = async () => {
 const ba = {}, bb = {};
 makeSearch("ba-q","ba-results","ba-chosen","ba-plats", ba);
 makeSearch("bb-q","bb-results","bb-chosen","bb-plats", bb);
+let editingBattleId = null;
 
 document.getElementById("b-save").onclick = async () => {
   const pa = ba.payload(), pb = bb.payload();
   if (!pa || !pb) { setMsg("b-msg", "Pick both movies.", false); return; }
+  const body = {
+    title: document.getElementById("b-title").value.trim(),
+    movie_a: pa, movie_b: pb,
+    days: parseInt(document.getElementById("b-days").value) || 30,
+  };
   try {
-    await api("/battles", {method:"POST", body:{
-      title: document.getElementById("b-title").value.trim(),
-      movie_a: pa, movie_b: pb,
-      days: parseInt(document.getElementById("b-days").value) || 30,
-    }});
-    setMsg("b-msg", "Battle created.", true);
+    if (editingBattleId) {
+      await api("/battles/" + editingBattleId + "/update", {method:"POST", body});
+      setMsg("b-msg", "Battle updated.", true);
+      editingBattleId = null;
+      document.getElementById("b-save").textContent = "Create Battle";
+    } else {
+      await api("/battles", {method:"POST", body});
+      setMsg("b-msg", "Battle created.", true);
+    }
     loadDashboard();
   } catch (e) { setMsg("b-msg", e.message, false); }
 };
+
+async function editBattle(id) {
+  let d;
+  try { d = await api("/battles"); }
+  catch (e) { setMsg("dash-msg", e.message, false); return; }
+  const b = (d.battles || []).find(x => x.id === id);
+  if (!b) return;
+  document.getElementById("b-title").value = b.title;
+  ba.setSelection({imdb_id:b.movie_a.imdb_id, title:b.movie_a.title, year:b.movie_a.year, poster:b.movie_a.poster}, b.movie_a.streaming);
+  bb.setSelection({imdb_id:b.movie_b.imdb_id, title:b.movie_b.title, year:b.movie_b.year, poster:b.movie_b.poster}, b.movie_b.streaming);
+  editingBattleId = id;
+  document.getElementById("b-save").textContent = "Update Battle";
+  setMsg("b-msg", "Editing: " + b.title + ". Change anything and Update.", true);
+  document.getElementById("b-title").scrollIntoView({behavior:"smooth", block:"center"});
+}
 
 // ---- Dashboard ----
 async function loadDashboard() {
@@ -316,6 +340,10 @@ async function loadDashboard() {
       ") vs " + b.b_title + " (" + b.b_votes + ") · " + status + winner;
     const actions = document.createElement("div");
     actions.className = "dash-actions";
+    const edit = document.createElement("button");
+    edit.className = "ghost small"; edit.textContent = "Edit";
+    edit.onclick = () => editBattle(b.id);
+    actions.appendChild(edit);
     const nNew = document.createElement("button");
     nNew.className = "ghost small"; nNew.textContent = "Notify new";
     nNew.onclick = async () => {

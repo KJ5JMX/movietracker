@@ -31,6 +31,7 @@ from models import (
     MovieOfWeekCompletion,
     Battle,
     BattleVote,
+    StreamingAvailabilityReport,
 )
 from movie_routes import _omdb_search_forgiving
 from streaming_routes import ALLOWED_PLATFORMS
@@ -120,6 +121,26 @@ def _battle_to_dict(battle, my_choice=None, counts=None):
         "active": bool(battle.active),
         "my_choice": my_choice,
     }
+
+
+def _seed_streaming_reports(imdb_id, platforms, country="US"):
+    """Mirror admin-curated streaming into the crowdsourced where-to-watch table
+    so the title's detail screen surfaces it too. Upserts + refreshes freshness."""
+    if not imdb_id or not platforms:
+        return
+    for p in platforms:
+        existing = StreamingAvailabilityReport.query.filter_by(
+            imdb_id=imdb_id, country=country, platform=p
+        ).first()
+        if existing:
+            existing.active = True
+            existing.last_confirmed_at = datetime.utcnow()
+        else:
+            db.session.add(StreamingAvailabilityReport(
+                imdb_id=imdb_id, country=country, platform=p,
+                reported_by_user_id=None,
+            ))
+    db.session.commit()
 
 
 def _vote_counts(battle_id):
@@ -409,6 +430,7 @@ def admin_set_mow():
         db.session.add(mow)
 
     db.session.commit()
+    _seed_streaming_reports(imdb_id, platforms)
     return jsonify({"movie_of_week": _mow_to_dict(mow)}), 200
 
 
@@ -457,7 +479,54 @@ def admin_create_battle():
     )
     db.session.add(battle)
     db.session.commit()
+    _seed_streaming_reports(battle.a_imdb_id, _load_platforms(battle.a_streaming))
+    _seed_streaming_reports(battle.b_imdb_id, _load_platforms(battle.b_streaming))
     return jsonify(_battle_to_dict(battle, None, {"a": 0, "b": 0})), 201
+
+
+@admin_bp.route("/api/battles/<int:battle_id>/update", methods=["POST"])
+@require_admin
+def admin_update_battle(battle_id):
+    """Edit an existing battle — title, either movie, their streaming, or the
+    voting window. Only fields present in the body are changed."""
+    from datetime import timedelta
+
+    battle = Battle.query.get(battle_id)
+    if not battle:
+        return jsonify({"message": "Battle not found"}), 404
+    data = request.get_json(silent=True) or {}
+
+    title = (data.get("title") or "").strip()
+    if title:
+        battle.title = title
+
+    a = data.get("movie_a") or {}
+    if a.get("imdb_id"):
+        battle.a_imdb_id = a["imdb_id"]
+        battle.a_title = a.get("title") or battle.a_title
+        battle.a_year = a.get("year")
+        battle.a_poster = a.get("poster")
+        battle.a_streaming = json.dumps(_clean_platforms(a.get("streaming") or []))
+
+    b = data.get("movie_b") or {}
+    if b.get("imdb_id"):
+        battle.b_imdb_id = b["imdb_id"]
+        battle.b_title = b.get("title") or battle.b_title
+        battle.b_year = b.get("year")
+        battle.b_poster = b.get("poster")
+        battle.b_streaming = json.dumps(_clean_platforms(b.get("streaming") or []))
+
+    if "days" in data:
+        try:
+            days = max(1, min(int(data["days"]), 90))
+            battle.ends_at = battle.created_at + timedelta(days=days)
+        except (TypeError, ValueError):
+            pass
+
+    db.session.commit()
+    _seed_streaming_reports(battle.a_imdb_id, _load_platforms(battle.a_streaming))
+    _seed_streaming_reports(battle.b_imdb_id, _load_platforms(battle.b_streaming))
+    return jsonify(_battle_to_dict(battle, None, _vote_counts(battle.id))), 200
 
 
 @admin_bp.route("/api/battles/<int:battle_id>/close", methods=["POST"])
