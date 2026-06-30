@@ -158,6 +158,7 @@ def user_to_dict(user):
         "onboarded": bool(user.onboarded),
         "has_apple": bool(user.apple_sub),
         "has_google": bool(user.google_sub),
+        "created_at": user.created_at.isoformat() if user.created_at else None,
     }
 
 
@@ -195,7 +196,14 @@ def register():
         return jsonify({"message": "An account with that email already exists"}), 400
 
     password_hash = generate_password_hash(password)
-    new_user = User(username=username, password_hash=password_hash, email=email)
+    # New signups start un-onboarded so they get the first-run welcome
+    # (genre picker + import tip + Pro teaser) before entering the app.
+    new_user = User(
+        username=username,
+        password_hash=password_hash,
+        email=email,
+        onboarded=False,
+    )
     db.session.add(new_user)
     db.session.commit()
 

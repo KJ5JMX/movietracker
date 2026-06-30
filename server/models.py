@@ -62,6 +62,10 @@ class User(db.Model):
     show_flair = db.Column(
         db.Boolean, default=True, server_default="1", nullable=False
     )
+    # Account creation time, shown as "member since" on the profile. Nullable so
+    # pre-existing rows (no recorded signup date) simply hide the date; new
+    # signups get an accurate timestamp.
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=True)
 
     @property
     def is_pro(self):
@@ -511,6 +515,28 @@ class BattleVote(db.Model):
     )
 
 
+class NightMessage(db.Model):
+    """A chat message inside a Movie Night session. Saved with the session so the
+    conversation can be replayed later (history list + the movie's detail page)."""
+
+    __tablename__ = "night_messages"
+
+    id = db.Column(db.Integer, primary_key=True)
+    session_id = db.Column(
+        db.Integer,
+        db.ForeignKey("movie_night_sessions.id", name="fk_night_message_session"),
+        nullable=False,
+        index=True,
+    )
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", name="fk_night_message_user"),
+        nullable=False,
+    )
+    text = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+
 class UserAchievement(db.Model):
     """One row per (user, ladder, tier) once earned. Points were granted at the
     moment of earning (added to User.points)."""
@@ -553,4 +579,31 @@ class UserFlair(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint("user_id", "flair_key", name="uq_user_flair"),
+    )
+
+
+class ActivityLike(db.Model):
+    """A thumbs-up on a friend's discovery activity. The activity is derived from
+    a friend's WatchlistItem (their add/rating), so the like targets that item.
+    user_id is the liker; item.user_id is the owner who gets notified."""
+
+    __tablename__ = "activity_likes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", name="fk_activity_like_user"),
+        nullable=False,
+        index=True,
+    )
+    item_id = db.Column(
+        db.Integer,
+        db.ForeignKey("watchlist_items.id", name="fk_activity_like_item"),
+        nullable=False,
+        index=True,
+    )
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "item_id", name="uq_activity_like_user_item"),
     )

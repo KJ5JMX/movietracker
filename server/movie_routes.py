@@ -12,7 +12,7 @@ from config import Config
 from models import db, StreamingCache, StreamingServiceTap
 
 
-IMPORT_MAX_LINES = 25  # Cap to protect the OMDb free-tier quota (1000/day)
+IMPORT_MAX_LINES = 50  # Cap to protect the OMDb quota + keep latency sane
 
 
 movie_bp = Blueprint("movies", __name__, url_prefix="/movies")

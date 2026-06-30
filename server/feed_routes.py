@@ -18,9 +18,10 @@ import json
 from datetime import datetime
 from flask import Blueprint, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 
-from models import User, Friendship, WatchlistItem
+from models import db, User, Friendship, WatchlistItem, ActivityLike
+from push import notify
 
 
 feed_bp = Blueprint("feed", __name__, url_prefix="/feed")
@@ -89,6 +90,9 @@ def _item_to_feed_dict(item, reason, reason_user=None, kind="activity"):
     """Lightweight feed-item dict. Mirrors WatchlistItem serializer's main fields
     but adds the `reason` line that drives the cozy, transparent feed copy."""
     return {
+        # The friend's WatchlistItem id — the like target. Needed so the app
+        # can thumbs-up a specific activity row.
+        "item_id": item.id,
         "imdb_id": item.imdb_id,
         "title": item.title,
         "year": item.year,
@@ -211,6 +215,38 @@ def _build_suggestions(friend_ids, owned, user_genres, exclude):
     return out
 
 
+def _push_name(user):
+    return (user.display_name or user.username) if user else "A friend"
+
+
+def _attach_likes(items, me_id):
+    """Fill in like_count + liked_by_me for each feed item in one pair of
+    queries (count grouped by item, plus which ones I've already liked)."""
+    ids = [it["item_id"] for it in items if it.get("item_id")]
+    if not ids:
+        for it in items:
+            it["like_count"] = 0
+            it["liked_by_me"] = False
+        return items
+    counts = dict(
+        db.session.query(ActivityLike.item_id, func.count(ActivityLike.id))
+        .filter(ActivityLike.item_id.in_(ids))
+        .group_by(ActivityLike.item_id)
+        .all()
+    )
+    mine = {
+        row.item_id
+        for row in ActivityLike.query.with_entities(ActivityLike.item_id)
+        .filter(ActivityLike.user_id == me_id, ActivityLike.item_id.in_(ids))
+        .all()
+    }
+    for it in items:
+        iid = it.get("item_id")
+        it["like_count"] = int(counts.get(iid, 0))
+        it["liked_by_me"] = iid in mine
+    return items
+
+
 def _interleave(activity, suggestions, every):
     """Drop one suggestion after every `every` activity items."""
     out = []
@@ -253,9 +289,67 @@ def get_feed():
         activity, shown_keys = [], set()
     suggestions = _build_suggestions(friend_ids, owned, user_genres, shown_keys)
     items = _interleave(activity, suggestions, SUGGESTION_EVERY)
+    _attach_likes(items, me_id)
 
     return jsonify({
         "items": items,
         "has_friends": len(friend_ids) > 0,
         "has_genres": len(user_genres) > 0,
+    }), 200
+
+
+# ---------------------------------------------------------------------------
+# Likes (thumbs-up on a friend's activity)
+# ---------------------------------------------------------------------------
+
+def _like_count(item_id):
+    return (
+        ActivityLike.query.filter(ActivityLike.item_id == item_id).count()
+    )
+
+
+@feed_bp.route("/items/<int:item_id>/like", methods=["POST"])
+@jwt_required()
+def like_item(item_id):
+    me_id = int(get_jwt_identity())
+    item = WatchlistItem.query.get(item_id)
+    if not item:
+        return jsonify({"message": "Item not found"}), 404
+    # You can't like your own activity.
+    if item.user_id == me_id:
+        return jsonify({"message": "Cannot like your own item"}), 400
+
+    existing = ActivityLike.query.filter_by(user_id=me_id, item_id=item_id).first()
+    if not existing:
+        db.session.add(ActivityLike(user_id=me_id, item_id=item_id))
+        db.session.commit()
+        # Notify the owner (respects their 'likes' category toggle).
+        me = User.query.get(me_id)
+        notify(
+            [item.user_id],
+            f"{_push_name(me)} liked your pick",
+            item.title,
+            data={"imdb_id": item.imdb_id},
+            category="likes",
+        )
+
+    return jsonify({
+        "item_id": item_id,
+        "like_count": _like_count(item_id),
+        "liked_by_me": True,
+    }), 200
+
+
+@feed_bp.route("/items/<int:item_id>/like", methods=["DELETE"])
+@jwt_required()
+def unlike_item(item_id):
+    me_id = int(get_jwt_identity())
+    existing = ActivityLike.query.filter_by(user_id=me_id, item_id=item_id).first()
+    if existing:
+        db.session.delete(existing)
+        db.session.commit()
+    return jsonify({
+        "item_id": item_id,
+        "like_count": _like_count(item_id),
+        "liked_by_me": False,
     }), 200

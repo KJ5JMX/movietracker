@@ -166,7 +166,13 @@ def compute_metrics(user_id):
         Recommendation.query.filter_by(from_user_id=user_id).count()
         + ReviewShare.query.filter_by(from_user_id=user_id).count()
     )
-    movie_nights = MovieNightParticipant.query.filter_by(user_id=user_id).count()
+    # Only completed movie nights count: the participant must have rated, which
+    # only happens after pressing ROLL CREDITS. Merely setting up or joining a
+    # session (no rating) earns nothing, so nights can't be farmed unwatched.
+    movie_nights = MovieNightParticipant.query.filter(
+        MovieNightParticipant.user_id == user_id,
+        MovieNightParticipant.rated_at.isnot(None),
+    ).count()
     battles = (
         BattleVote.query.filter_by(user_id=user_id)
         .distinct(BattleVote.battle_id).count()

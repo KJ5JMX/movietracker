@@ -34,6 +34,7 @@ NOTIFICATION_CATEGORIES = [
     "reminders",
     "achievements",
     "festival",
+    "likes",
 ]
 
 

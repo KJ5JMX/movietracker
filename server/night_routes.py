@@ -28,6 +28,7 @@ from models import (
     WatchlistItem,
     MovieNightSession,
     MovieNightParticipant,
+    NightMessage,
 )
 from watchlist_routes import _parse_release_date
 from achievements import sync_and_notify
@@ -233,15 +234,13 @@ def roll():
     if err:
         return jsonify({"message": err}), 400
 
-    # Solo Movie Night is free — roll against your own list all you want.
-    # Bringing friends into the roll (the social payoff) is Pro.
-    if len(user_ids) > 1:
-        me = User.query.get(me_id)
-        if not me or not me.is_pro:
-            return jsonify({
-                "message": "Movie Night with friends requires Pro",
-                "code": "pro_required",
-            }), 402
+    # Movie Night is a Pro feature end to end (solo or group).
+    me = User.query.get(me_id)
+    if not me or not me.is_pro:
+        return jsonify({
+            "message": "Movie Night requires Pro",
+            "code": "pro_required",
+        }), 402
 
     media_type, max_runtime, mood, err = _parse_filters(data)
     if err:
@@ -330,9 +329,9 @@ def schedule_night():
     user_ids, err = _validate_participants(me_id, data.get("participant_ids") or [])
     if err:
         return jsonify({"message": err}), 400
-    if len(user_ids) > 1 and not me.is_pro:
+    if not me.is_pro:
         return jsonify({
-            "message": "Movie Night with friends requires Pro",
+            "message": "Movie Night requires Pro",
             "code": "pro_required",
         }), 402
 
@@ -385,11 +384,10 @@ def create_session():
     if err:
         return jsonify({"message": err}), 400
 
-    # Same line as /roll: a solo session (tracking your own pick + rating)
-    # is free; a session WITH friends is the Pro feature.
-    if len(user_ids) > 1 and not me.is_pro:
+    # Movie Night is a Pro feature end to end (solo or group).
+    if not me.is_pro:
         return jsonify({
-            "message": "Movie Night with friends requires Pro",
+            "message": "Movie Night requires Pro",
             "code": "pro_required",
         }), 402
 
@@ -673,3 +671,119 @@ def rate_session(session_id):
     db.session.commit()
     sync_and_notify(me_id)
     return jsonify(_serialize_session(session, me_id)), 200
+
+
+# ---------------------------------------------------------------------------
+# Movie Night chat + history (Pro: chat lives inside a Movie Night session)
+# ---------------------------------------------------------------------------
+
+def _message_to_dict(m, users_by_id=None):
+    user = (users_by_id or {}).get(m.user_id) if users_by_id is not None else User.query.get(m.user_id)
+    return {
+        "id": m.id,
+        "user": _user_summary(user),
+        "text": m.text,
+        "created_at": m.created_at.isoformat() if m.created_at else None,
+    }
+
+
+def _is_participant(session_id, user_id):
+    return MovieNightParticipant.query.filter_by(
+        session_id=session_id, user_id=user_id
+    ).first() is not None
+
+
+@night_bp.route("/sessions/<int:session_id>/messages", methods=["POST"])
+@jwt_required()
+def post_message(session_id):
+    me_id = int(get_jwt_identity())
+    if not MovieNightSession.query.get(session_id):
+        return jsonify({"message": "Session not found"}), 404
+    if not _is_participant(session_id, me_id):
+        return jsonify({"message": "Not a participant"}), 403
+    data = request.get_json(silent=True) or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"message": "Message can't be empty"}), 400
+    msg = NightMessage(session_id=session_id, user_id=me_id, text=text[:1000])
+    db.session.add(msg)
+    db.session.commit()
+    return jsonify(_message_to_dict(msg)), 201
+
+
+@night_bp.route("/sessions/<int:session_id>/messages", methods=["GET"])
+@jwt_required()
+def get_messages(session_id):
+    me_id = int(get_jwt_identity())
+    if not _is_participant(session_id, me_id):
+        return jsonify({"message": "Not a participant"}), 403
+    after = request.args.get("after", type=int)
+    q = NightMessage.query.filter_by(session_id=session_id)
+    if after:
+        q = q.filter(NightMessage.id > after)
+    msgs = q.order_by(NightMessage.id.asc()).all()
+    users_by_id = {
+        u.id: u for u in User.query.filter(
+            User.id.in_([m.user_id for m in msgs])
+        ).all()
+    } if msgs else {}
+    return jsonify([_message_to_dict(m, users_by_id) for m in msgs]), 200
+
+
+@night_bp.route("/sessions/history", methods=["GET"])
+@jwt_required()
+def sessions_history():
+    """Every Movie Night I've been part of, newest first (for the clock-icon list)."""
+    me_id = int(get_jwt_identity())
+    session_ids = [
+        p.session_id
+        for p in MovieNightParticipant.query.filter_by(user_id=me_id).all()
+    ]
+    if not session_ids:
+        return jsonify([]), 200
+    sessions = (
+        MovieNightSession.query.filter(MovieNightSession.id.in_(session_ids))
+        .order_by(MovieNightSession.created_at.desc())
+        .all()
+    )
+    return jsonify([_serialize_session(s, me_id) for s in sessions]), 200
+
+
+@night_bp.route("/sessions/for-title", methods=["GET"])
+@jwt_required()
+def sessions_for_title():
+    """Movie Nights for a given title that I joined, with ratings + saved chat —
+    powers the 'Movie night happened on this date' block on the movie's detail."""
+    me_id = int(get_jwt_identity())
+    imdb_id = request.args.get("imdb_id")
+    if not imdb_id:
+        return jsonify([]), 200
+    session_ids = [
+        p.session_id
+        for p in MovieNightParticipant.query.filter_by(user_id=me_id).all()
+    ]
+    if not session_ids:
+        return jsonify([]), 200
+    sessions = (
+        MovieNightSession.query.filter(
+            MovieNightSession.id.in_(session_ids),
+            MovieNightSession.picked_imdb_id == imdb_id,
+        )
+        .order_by(MovieNightSession.created_at.desc())
+        .all()
+    )
+    out = []
+    for s in sessions:
+        d = _serialize_session(s, me_id)
+        msgs = (
+            NightMessage.query.filter_by(session_id=s.id)
+            .order_by(NightMessage.id.asc()).all()
+        )
+        ubi = {
+            u.id: u for u in User.query.filter(
+                User.id.in_([m.user_id for m in msgs])
+            ).all()
+        } if msgs else {}
+        d["messages"] = [_message_to_dict(m, ubi) for m in msgs]
+        out.append(d)
+    return jsonify(out), 200
