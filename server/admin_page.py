@@ -115,6 +115,13 @@ ADMIN_PAGE_HTML = r"""<!DOCTYPE html>
     <div class="msg" id="b-msg"></div>
   </div>
 
+  <!-- NUMBERS -->
+  <div class="card">
+    <h2>Numbers</h2>
+    <div id="stats-grid" style="display:flex;flex-wrap:wrap;gap:10px">Loading...</div>
+    <div class="msg" id="stats-msg"></div>
+  </div>
+
   <!-- DASHBOARD -->
   <div class="card">
     <h2>Dashboard</h2>
@@ -371,6 +378,39 @@ async function loadDashboard() {
   });
 }
 
+async function loadStats() {
+  let s;
+  try { s = await api("/stats"); }
+  catch (e) { setMsg("stats-msg", e.message, false); return; }
+  setMsg("stats-msg", "", true);
+  const tiles = [
+    ["Free accounts", s.users_free],
+    ["Pro accounts", s.users_pro],
+    ["Total users", s.users_total],
+    ["Movies", s.movies],
+    ["TV shows", s.tv],
+    ["Books", s.books],
+    ["Songs", s.songs],
+    ["Watched", s.watched],
+    ["Recs sent", s.recs],
+    ["Movie nights", s.movie_nights],
+    ["Nights rated", s.nights_rated],
+    ["Likes", s.likes],
+    ["MotW completions", s.mow_completions],
+    ["Battle votes", s.battle_votes],
+  ];
+  const grid = document.getElementById("stats-grid");
+  grid.innerHTML = "";
+  tiles.forEach(([label, val]) => {
+    const t = document.createElement("div");
+    t.style.cssText = "min-width:108px;flex:1 0 108px;padding:12px 14px;border:1px solid #d7d0c4;border-radius:8px;text-align:center;background:#fffdf8";
+    t.innerHTML = '<div style="font-size:26px;font-weight:800">' + (val ?? 0) +
+      '</div><div style="font-size:12px;color:#777;margin-top:2px">' + label + '</div>';
+    grid.appendChild(t);
+  });
+}
+
+loadStats();
 loadCurrentMotm();
 loadDashboard();
 </script>

@@ -32,6 +32,10 @@ from models import (
     Battle,
     BattleVote,
     StreamingAvailabilityReport,
+    Recommendation,
+    MovieNightSession,
+    MovieNightParticipant,
+    ActivityLike,
 )
 from movie_routes import _omdb_search_forgiving
 from streaming_routes import ALLOWED_PLATFORMS
@@ -591,6 +595,37 @@ def admin_notify_mow():
         category="festival", data={"type": "movie_of_week"},
     )
     return jsonify({"message": "Notification sent"}), 200
+
+
+@admin_bp.route("/api/stats", methods=["GET"])
+@require_admin
+def admin_stats():
+    """At-a-glance counts for the curation dashboard."""
+    pro_statuses = ("comp", "paid", "trial")
+    users_total = User.query.count()
+    users_pro = User.query.filter(User.pro_status.in_(pro_statuses)).count()
+
+    def items(media_type):
+        return WatchlistItem.query.filter_by(media_type=media_type).count()
+
+    return jsonify({
+        "users_total": users_total,
+        "users_pro": users_pro,
+        "users_free": users_total - users_pro,
+        "movies": items("movie"),
+        "tv": items("tv"),
+        "books": items("book"),
+        "songs": items("song"),
+        "watched": WatchlistItem.query.filter_by(watch_status="watched").count(),
+        "recs": Recommendation.query.count(),
+        "movie_nights": MovieNightSession.query.count(),
+        "nights_rated": MovieNightParticipant.query.filter(
+            MovieNightParticipant.rated_at.isnot(None)
+        ).count(),
+        "likes": ActivityLike.query.count(),
+        "mow_completions": MovieOfWeekCompletion.query.count(),
+        "battle_votes": BattleVote.query.count(),
+    }), 200
 
 
 @admin_bp.route("/api/notify/battle/<int:battle_id>", methods=["POST"])
