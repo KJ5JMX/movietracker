@@ -13,7 +13,10 @@ import time
 from datetime import date, datetime, timedelta
 
 from app import app
-from models import db, MovieNightSession, MovieNightParticipant, WatchlistItem
+from models import (
+    db, MovieNightSession, MovieNightParticipant, WatchlistItem,
+    Battle, BattleVote, User,
+)
 from push import notify
 from watchlist_routes import _parse_release_date
 
@@ -71,6 +74,35 @@ def _night_reminders():
         db.session.commit()
 
 
+def _battle_results():
+    """When a battle's voting window has closed, announce the winner once to
+    everyone, then mark it inactive so it never re-sends. This also nudges the
+    curator that it's time to set up the next battle."""
+    now = datetime.utcnow()
+    battles = Battle.query.filter(
+        Battle.active.is_(True),
+        Battle.ends_at.isnot(None),
+        Battle.ends_at < now,
+    ).all()
+    if not battles:
+        return
+    user_ids = [u.id for u in User.query.with_entities(User.id).all()]
+    for b in battles:
+        a = BattleVote.query.filter_by(battle_id=b.id, choice="a").count()
+        bb = BattleVote.query.filter_by(battle_id=b.id, choice="b").count()
+        if a == bb:
+            msg = f"{b.title}: it's a tie!"
+        else:
+            winner = b.a_title if a > bb else b.b_title
+            msg = f"{winner} won {b.title}"
+        notify(
+            user_ids, "Battle results", msg,
+            app=app, category="festival", data={"type": "battle_result"},
+        )
+        b.active = False  # announced exactly once
+    db.session.commit()
+
+
 def main():
     print("[jobs] reminder loop starting")
     while True:
@@ -78,6 +110,7 @@ def main():
             with app.app_context():
                 _release_reminders()
                 _night_reminders()
+                _battle_results()
         except Exception as e:
             print(f"[jobs] cycle failed: {e}")
         time.sleep(CHECK_INTERVAL)

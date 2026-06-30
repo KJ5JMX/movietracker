@@ -624,6 +624,9 @@ def admin_notify_battle_result(battle_id):
         _all_user_ids(), "Battle results", msg,
         category="festival", data={"type": "battle_result"},
     )
+    # Mark concluded so the auto-result job doesn't announce it again.
+    b.active = False
+    db.session.commit()
     return jsonify({"message": "Notification sent"}), 200
 
 

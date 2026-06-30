@@ -28,7 +28,8 @@ feed_bp = Blueprint("feed", __name__, url_prefix="/feed")
 
 # One chronological stream of friend activity, with genre suggestions sprinkled
 # in. Tuned to feel like a feed you scroll, not five cramped shelves.
-ACTIVITY_LIMIT = 40        # most-recent friend events to surface
+ACTIVITY_LIMIT = 120       # friend events to surface (covers several days of
+                           # activity for a small group, not just the newest few)
 SUGGESTION_EVERY = 9       # drop a genre suggestion every N activity items
 
 
