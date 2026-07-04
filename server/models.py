@@ -294,6 +294,9 @@ class GroupMember(db.Model):
         nullable=False,
         index=True,
     )
+    # Manual "watch order" position for custom sorting (e.g. Star Wars by episode).
+    # Null falls back to insertion order (id).
+    position = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     __table_args__ = (

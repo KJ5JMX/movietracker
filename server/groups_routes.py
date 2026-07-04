@@ -32,19 +32,27 @@ def _owned_items(user_id, item_ids):
 
 
 def _members_ordered(group_id):
-    """Membership rows for a group, oldest first (stable fan/swapper order)."""
+    """Membership rows in custom order: by position (manual watch order) with
+    unpositioned rows falling back to insertion order (id)."""
     return (
         GroupMember.query.filter_by(group_id=group_id)
-        .order_by(GroupMember.id.asc())
+        .order_by(
+            (GroupMember.position.is_(None)),  # positioned rows first
+            GroupMember.position.asc(),
+            GroupMember.id.asc(),
+        )
         .all()
     )
 
 
 def group_summary(group):
-    """Light dict for the list card: name, count, and a few posters for the fan."""
+    """Light dict for the list card: name, count, posters for the fan, and the
+    distinct media types inside (so the list can show the collection under the
+    right filter, not only 'All')."""
     members = _members_ordered(group.id)
     item_ids = [m.watchlist_item_id for m in members]
     posters = []
+    media_types = []
     if item_ids:
         items = {
             it.id: it
@@ -52,12 +60,16 @@ def group_summary(group):
                 WatchlistItem.id.in_(item_ids)
             ).all()
         }
+        seen_types = set()
         for iid in item_ids:
             it = items.get(iid)
-            if it and it.poster:
+            if not it:
+                continue
+            if it.poster and len(posters) < FAN_POSTER_LIMIT:
                 posters.append(it.poster)
-            if len(posters) >= FAN_POSTER_LIMIT:
-                break
+            if it.media_type and it.media_type not in seen_types:
+                seen_types.add(it.media_type)
+                media_types.append(it.media_type)
     return {
         "id": group.id,
         "name": group.name,
@@ -65,6 +77,7 @@ def group_summary(group):
         "member_count": len(item_ids),
         "item_ids": item_ids,
         "posters": posters,
+        "media_types": media_types,
     }
 
 
@@ -118,9 +131,9 @@ def create_group():
     db.session.add(group)
     db.session.flush()  # assign group.id before adding members
 
-    for it in items:
+    for idx, it in enumerate(items):
         db.session.add(
-            GroupMember(group_id=group.id, watchlist_item_id=it.id)
+            GroupMember(group_id=group.id, watchlist_item_id=it.id, position=idx)
         )
     db.session.commit()
 
@@ -166,14 +179,59 @@ def add_members(group_id):
     if not items:
         return jsonify({"message": "No valid items to add"}), 400
 
-    existing = {
-        m.watchlist_item_id for m in GroupMember.query.filter_by(group_id=group.id).all()
-    }
+    existing_members = GroupMember.query.filter_by(group_id=group.id).all()
+    existing = {m.watchlist_item_id for m in existing_members}
+    next_pos = max(
+        [m.position for m in existing_members if m.position is not None],
+        default=-1,
+    ) + 1
     for it in items:
         if it.id not in existing:
             db.session.add(
-                GroupMember(group_id=group.id, watchlist_item_id=it.id)
+                GroupMember(
+                    group_id=group.id, watchlist_item_id=it.id, position=next_pos
+                )
             )
+            next_pos += 1
+    db.session.commit()
+    return jsonify(group_detail(group)), 200
+
+
+@groups_bp.route("/<int:group_id>/order", methods=["PATCH"])
+@jwt_required()
+def reorder_group(group_id):
+    """Persist a manual member order (item_ids in the desired sequence)."""
+    user_id = int(get_jwt_identity())
+    group = Group.query.filter_by(id=group_id, user_id=user_id).first()
+    if not group:
+        return jsonify({"message": "Group not found"}), 404
+
+    data = request.get_json(silent=True) or {}
+    item_ids = data.get("item_ids")
+    if not isinstance(item_ids, list):
+        return jsonify({"message": "item_ids (ordered list) is required"}), 400
+
+    members = {
+        m.watchlist_item_id: m
+        for m in GroupMember.query.filter_by(group_id=group.id).all()
+    }
+    seen = set()
+    pos = 0
+    for raw in item_ids:
+        try:
+            iid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        m = members.get(iid)
+        if m and iid not in seen:
+            m.position = pos
+            seen.add(iid)
+            pos += 1
+    # Any members not named in the payload keep after, in their prior order.
+    for m in sorted(members.values(), key=lambda x: x.id):
+        if m.watchlist_item_id not in seen:
+            m.position = pos
+            pos += 1
     db.session.commit()
     return jsonify(group_detail(group)), 200
 
@@ -212,6 +270,20 @@ def delete_group(group_id):
     if not group:
         return jsonify({"message": "Group not found"}), 404
 
-    db.session.delete(group)  # membership rows cascade; items are untouched
+    # ?delete_items=1 also removes the member movies from the user's list.
+    # Default keeps them (only the collection is dissolved).
+    delete_items = request.args.get("delete_items") in ("1", "true", "yes")
+    if delete_items:
+        member_ids = [
+            m.watchlist_item_id
+            for m in GroupMember.query.filter_by(group_id=group.id).all()
+        ]
+        if member_ids:
+            WatchlistItem.query.filter(
+                WatchlistItem.user_id == user_id,
+                WatchlistItem.id.in_(member_ids),
+            ).delete(synchronize_session=False)  # group_members cascade via FK
+
+    db.session.delete(group)  # membership rows cascade; items kept unless above
     db.session.commit()
     return jsonify({"message": "Group deleted"}), 200
