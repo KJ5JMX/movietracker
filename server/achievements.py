@@ -127,6 +127,47 @@ FLAIR_BY_KEY = {f["key"]: f for f in FLAIR}
 
 
 # ---------------------------------------------------------------------------
+# Avatars — pop-culture profile pictures unlocked with points. Each key maps to
+# a bundled PNG in the app (src/avatars.ts). Prices are easy to tune here.
+# ---------------------------------------------------------------------------
+
+_AVATAR_NAME_OVERRIDES = {"dj": "DJ"}
+
+
+def _avatar(category, price, *keys):
+    return [
+        {
+            "key": k,
+            "name": _AVATAR_NAME_OVERRIDES.get(k, k.replace("_", " ").title()),
+            "category": category,
+            "price": price,
+        }
+        for k in keys
+    ]
+
+
+AVATARS = (
+    # Tier 1 — 50
+    _avatar("Characters", 50, "couch", "popcorn", "host")
+    + _avatar("Icons", 50, "ticket", "shoes", "shorts")
+    # Tier 2 — 100
+    + _avatar("Characters", 100, "bookworm", "punk", "poet", "anchor", "dj")
+    + _avatar("Icons", 100, "ball", "donut", "house")
+    # Tier 3 — 150
+    + _avatar("Characters", 150, "ranger", "noir", "librarian", "professor")
+    + _avatar("Icons", 150, "blade", "hammer", "hoverboard")
+    # Tier 4 — 200
+    + _avatar("Characters", 200, "rockstar", "diva", "conductor")
+    + _avatar("Icons", 200, "idol", "totem")
+    # Tier 5 — 250 (epics)
+    + _avatar("Characters", 250, "wizard", "director", "vampire")
+    + _avatar("Icons", 250, "raptor", "gauntlet", "ring")
+)
+
+AVATARS_BY_KEY = {a["key"]: a for a in AVATARS}
+
+
+# ---------------------------------------------------------------------------
 # Metrics — how many of each thing the user has done.
 # ---------------------------------------------------------------------------
 
@@ -263,4 +304,4 @@ def award_points(user_id, amount):
 
 def catalog_dict():
     """Static catalog for the app to render."""
-    return {"ladders": LADDERS, "flair": FLAIR}
+    return {"ladders": LADDERS, "flair": FLAIR, "avatars": AVATARS}

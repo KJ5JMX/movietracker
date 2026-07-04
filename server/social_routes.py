@@ -25,6 +25,7 @@ Endpoints:
     GET    /notifications/count       { recs, reviews, friend_requests, total }
 """
 
+import json
 from datetime import datetime
 
 from flask import Blueprint, request, jsonify
@@ -32,7 +33,10 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import or_, and_
 
 from push import notify
-from models import db, User, Friendship, Recommendation, ReviewShare, WatchlistItem
+from models import (
+    db, User, Friendship, Recommendation, ReviewShare, WatchlistItem,
+    Group, GroupMember, GroupRecommendation,
+)
 from achievements import sync_and_notify
 
 
@@ -80,6 +84,7 @@ def friend_request_to_dict(f):
 
 def rec_to_dict(r):
     return {
+        "kind": "single",
         "id": r.id,
         "from_user": user_summary(User.query.get(r.from_user_id)),
         "imdb_id": r.imdb_id,
@@ -91,6 +96,32 @@ def rec_to_dict(r):
         "note": r.note,
         "status": r.status,
         "created_at": r.created_at.isoformat() if r.created_at else None,
+    }
+
+
+def _parse_rec_items(raw):
+    """group_recommendations.items is a JSON list of member snapshots."""
+    try:
+        value = json.loads(raw or "[]")
+        return value if isinstance(value, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
+def group_rec_to_dict(gr):
+    items = _parse_rec_items(gr.items)
+    posters = [i.get("poster") for i in items if i.get("poster")][:5]
+    return {
+        "kind": "group",
+        "id": gr.id,
+        "from_user": user_summary(User.query.get(gr.from_user_id)),
+        "name": gr.name,
+        "note": gr.note,
+        "count": len(items),
+        "posters": posters,
+        "items": items,
+        "status": gr.status,
+        "created_at": gr.created_at.isoformat() if gr.created_at else None,
     }
 
 
@@ -392,10 +423,20 @@ def list_recs():
     recs = (
         Recommendation.query
         .filter(Recommendation.to_user_id == me_id, Recommendation.status == "pending")
-        .order_by(Recommendation.created_at.desc())
         .all()
     )
-    return jsonify([rec_to_dict(r) for r in recs]), 200
+    group_recs = (
+        GroupRecommendation.query
+        .filter(GroupRecommendation.to_user_id == me_id,
+                GroupRecommendation.status == "pending")
+        .all()
+    )
+    combined = [rec_to_dict(r) for r in recs] + [
+        group_rec_to_dict(gr) for gr in group_recs
+    ]
+    # Newest first, mixing singles and group recs by created_at.
+    combined.sort(key=lambda d: d.get("created_at") or "", reverse=True)
+    return jsonify(combined), 200
 
 
 @social_bp.route("/recs/", methods=["POST"])
@@ -512,6 +553,134 @@ def decline_rec(rec_id):
 
 
 # ---------------------------------------------------------------------------
+# Group recommendations (send a whole collection)
+# ---------------------------------------------------------------------------
+
+_REC_ITEM_FIELDS = ("imdb_id", "media_type", "title", "year", "poster", "genre")
+
+
+@social_bp.route("/recs/group", methods=["POST"])
+@jwt_required()
+def send_group_rec():
+    me_id = int(get_jwt_identity())
+    data = request.get_json() or {}
+
+    to_user_id = data.get("to_user_id")
+    raw_items = data.get("items")
+    if not to_user_id or not isinstance(raw_items, list) or not raw_items:
+        return jsonify({"message": "to_user_id and a non-empty items list required"}), 400
+    try:
+        to_user_id = int(to_user_id)
+    except (TypeError, ValueError):
+        return jsonify({"message": "to_user_id must be an integer"}), 400
+    if not are_friends(me_id, to_user_id):
+        return jsonify({"message": "Can only recommend to friends"}), 403
+
+    # Keep only known fields + a valid imdb_id/title per member.
+    items = []
+    for it in raw_items:
+        if not isinstance(it, dict) or not it.get("imdb_id") or not it.get("title"):
+            continue
+        mt = it.get("media_type", "movie")
+        if mt not in {"movie", "tv", "song", "book"}:
+            mt = "movie"
+        items.append({**{k: it.get(k) for k in _REC_ITEM_FIELDS}, "media_type": mt})
+    if not items:
+        return jsonify({"message": "No valid items to send"}), 400
+
+    gr = GroupRecommendation(
+        from_user_id=me_id,
+        to_user_id=to_user_id,
+        name=(data.get("name") or "").strip() or None,
+        note=(data.get("note") or "").strip() or None,
+        items=json.dumps(items),
+        status="pending",
+    )
+    db.session.add(gr)
+    db.session.commit()
+
+    me = User.query.get(me_id)
+    label = gr.name or "a collection"
+    notify([to_user_id], f"Collection from {_push_name(me)}",
+           f"{label} · {len(items)} items", category="recommendations")
+    sync_and_notify(me_id)
+    return jsonify(group_rec_to_dict(gr)), 201
+
+
+@social_bp.route("/recs/group/<int:gr_id>/accept", methods=["POST"])
+@jwt_required()
+def accept_group_rec(gr_id):
+    me_id = int(get_jwt_identity())
+    gr = GroupRecommendation.query.get(gr_id)
+    if not gr or gr.to_user_id != me_id:
+        return jsonify({"message": "Recommendation not found"}), 404
+    if gr.status != "pending":
+        return jsonify({"message": f"Already {gr.status}"}), 400
+
+    items = _parse_rec_items(gr.items)
+    member_item_ids = []
+    for snap in items:
+        imdb_id = snap.get("imdb_id")
+        media_type = snap.get("media_type", "movie")
+        if not imdb_id:
+            continue
+        # Reuse an item the recipient already has (preserves their rating);
+        # only create the ones they're missing.
+        existing = WatchlistItem.query.filter_by(
+            user_id=me_id, imdb_id=imdb_id, media_type=media_type
+        ).first()
+        if existing:
+            if not existing.recommended_by_user_id:
+                existing.recommended_by_user_id = gr.from_user_id
+            member_item_ids.append(existing.id)
+        else:
+            new_item = WatchlistItem(
+                title=snap.get("title") or "Untitled",
+                year=snap.get("year"),
+                imdb_id=imdb_id,
+                media_type=media_type,
+                poster=snap.get("poster"),
+                genre=snap.get("genre"),
+                watch_status="want_to_watch",
+                user_id=me_id,
+                recommended_by_user_id=gr.from_user_id,
+            )
+            db.session.add(new_item)
+            db.session.flush()
+            member_item_ids.append(new_item.id)
+
+    # Rebuild the collection on the recipient's side.
+    group = Group(user_id=me_id, name=gr.name)
+    db.session.add(group)
+    db.session.flush()
+    for iid in member_item_ids:
+        db.session.add(GroupMember(group_id=group.id, watchlist_item_id=iid))
+
+    gr.status = "accepted"
+    db.session.commit()
+
+    me = User.query.get(me_id)
+    notify([gr.from_user_id], "Your collection landed",
+           f"{_push_name(me)} added {gr.name or 'your collection'}",
+           category="recommendations")
+    return jsonify({"message": "Collection added", "group_id": group.id}), 201
+
+
+@social_bp.route("/recs/group/<int:gr_id>/decline", methods=["POST"])
+@jwt_required()
+def decline_group_rec(gr_id):
+    me_id = int(get_jwt_identity())
+    gr = GroupRecommendation.query.get(gr_id)
+    if not gr or gr.to_user_id != me_id:
+        return jsonify({"message": "Recommendation not found"}), 404
+    if gr.status != "pending":
+        return jsonify({"message": f"Already {gr.status}"}), 400
+    gr.status = "declined"
+    db.session.commit()
+    return jsonify({"message": "Declined"}), 200
+
+
+# ---------------------------------------------------------------------------
 # Review shares
 # ---------------------------------------------------------------------------
 
@@ -615,6 +784,10 @@ def mark_review_read(review_id):
 def notifications_count():
     me_id = int(get_jwt_identity())
     pending_recs = Recommendation.query.filter_by(
+        to_user_id=me_id, status="pending"
+    ).count()
+    # A sent collection counts as one rec, not one per movie.
+    pending_recs += GroupRecommendation.query.filter_by(
         to_user_id=me_id, status="pending"
     ).count()
     unread_reviews = ReviewShare.query.filter_by(

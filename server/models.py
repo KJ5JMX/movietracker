@@ -62,6 +62,9 @@ class User(db.Model):
     show_flair = db.Column(
         db.Boolean, default=True, server_default="1", nullable=False
     )
+    # Equipped avatar key from the avatar shop (bought with points). Null shows
+    # the default initial-in-a-circle.
+    avatar_selected = db.Column(db.String, nullable=True)
     # Account creation time, shown as "member since" on the profile. Nullable so
     # pre-existing rows (no recorded signup date) simply hide the date; new
     # signups get an accurate timestamp.
@@ -233,6 +236,104 @@ class WatchlistItem(db.Model):
         db.ForeignKey("users.id", name="fk_watchlist_recommended_by_user_id"),
         nullable=True,
     )
+
+
+class Group(db.Model):
+    """A user-created collection of watchlist items (e.g. "Harry Potter").
+
+    Purely an organizational overlay: the member items keep their own ratings
+    and detail. A group is shown in the list as a single fan-of-posters card;
+    its members are hidden from the flat list (Lists passes exclude_grouped).
+    Many-to-many by design — one item can belong to several groups.
+    """
+
+    __tablename__ = "groups"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", name="fk_group_user"),
+        nullable=False,
+        index=True,
+    )
+    name = db.Column(db.String, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    # Deleting a group removes its membership rows but never the items.
+    members = db.relationship(
+        "GroupMember",
+        backref="group",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class GroupMember(db.Model):
+    """Join row: which watchlist item belongs to which group.
+
+    ondelete CASCADE on both FKs (SQLite has PRAGMA foreign_keys=ON) so deleting
+    a group or an item cleans up membership without orphan rows.
+    """
+
+    __tablename__ = "group_members"
+
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(
+        db.Integer,
+        db.ForeignKey("groups.id", name="fk_group_member_group", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    watchlist_item_id = db.Column(
+        db.Integer,
+        db.ForeignKey(
+            "watchlist_items.id",
+            name="fk_group_member_item",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "group_id", "watchlist_item_id", name="uq_group_member"
+        ),
+    )
+
+
+class GroupRecommendation(db.Model):
+    """A whole collection sent to a friend. The member snapshots are stored as
+    JSON (like seasons_watched / notification_settings) so sending a bundle
+    never touches the single-item Recommendation table. On accept, the recipient
+    gets a rebuilt Group: items they already own are reused (rating preserved),
+    missing ones are created.
+    """
+
+    __tablename__ = "group_recommendations"
+
+    id = db.Column(db.Integer, primary_key=True)
+    from_user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", name="fk_group_rec_from_user"),
+        nullable=False,
+        index=True,
+    )
+    to_user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", name="fk_group_rec_to_user"),
+        nullable=False,
+        index=True,
+    )
+    name = db.Column(db.String, nullable=True)
+    note = db.Column(db.Text, nullable=True)
+    # JSON list of {imdb_id, media_type, title, year, poster, genre}
+    items = db.Column(db.Text, nullable=False)
+    status = db.Column(
+        db.String, default="pending", server_default="pending", nullable=False
+    )  # pending, accepted, declined
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
 
 class DiscussionComment(db.Model):
@@ -579,6 +680,27 @@ class UserFlair(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint("user_id", "flair_key", name="uq_user_flair"),
+    )
+
+
+class UserAvatar(db.Model):
+    """An avatar a user has unlocked with points. Owned forever once bought;
+    User.avatar_selected points at the one currently equipped."""
+
+    __tablename__ = "user_avatars"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", name="fk_user_avatar_user"),
+        nullable=False,
+        index=True,
+    )
+    avatar_key = db.Column(db.String, nullable=False)
+    unlocked_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "avatar_key", name="uq_user_avatar"),
     )
 
 

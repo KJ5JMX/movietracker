@@ -3,7 +3,7 @@ import re
 from datetime import date, datetime
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from models import db, WatchlistItem, User
+from models import db, WatchlistItem, User, GroupMember
 from achievements import sync_and_notify
 
 
@@ -151,6 +151,13 @@ def get_watchlist():
         if media_type not in ALLOWED_MEDIA_TYPES:
             return jsonify({"message": f"Invalid media_type: {media_type}"}), 400
         query = query.filter_by(media_type=media_type)
+
+    # The Lists screen passes exclude_grouped=1 so items that live in a group
+    # show only inside their fan card, not the flat list. Night/feed omit it and
+    # still see every item (a grouped movie is still watchable/recommendable).
+    if request.args.get("exclude_grouped") in ("1", "true", "yes"):
+        grouped_ids = db.session.query(GroupMember.watchlist_item_id)
+        query = query.filter(WatchlistItem.id.notin_(grouped_ids))
 
     items = query.all()
 

@@ -14,9 +14,10 @@ Week + battles) are granted directly at the event in festival_routes.
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
-from models import db, User, UserAchievement, UserFlair
+from models import db, User, UserAchievement, UserFlair, UserAvatar
 from achievements import (
-    LADDERS, FLAIR_BY_KEY, compute_metrics, sync_achievements, catalog_dict,
+    LADDERS, FLAIR_BY_KEY, AVATARS_BY_KEY,
+    compute_metrics, sync_achievements, catalog_dict,
 )
 
 gam_bp = Blueprint("gamification", __name__)
@@ -57,12 +58,22 @@ def _progress_dict(user_id):
         FLAIR_BY_KEY.get(user.flair_selected, {}).get("name")
         if user.flair_selected else None
     )
+    owned_avatars = [
+        ua.avatar_key for ua in UserAvatar.query.filter_by(user_id=user_id).all()
+    ]
+    avatar_name = (
+        AVATARS_BY_KEY.get(user.avatar_selected, {}).get("name")
+        if user.avatar_selected else None
+    )
     return {
         "points": user.points or 0,
         "show_flair": bool(user.show_flair),
         "flair_selected": user.flair_selected,
         "flair_selected_name": selected_name,
         "owned_flair": owned,
+        "avatar_selected": user.avatar_selected,
+        "avatar_selected_name": avatar_name,
+        "owned_avatars": owned_avatars,
         "metrics": metrics,
         "ladders": ladders,
     }
@@ -129,3 +140,46 @@ def toggle_show_flair():
     user.show_flair = bool(data.get("show"))
     db.session.commit()
     return jsonify({"show_flair": user.show_flair}), 200
+
+
+@gam_bp.route("/me/avatar/buy", methods=["POST"])
+@jwt_required()
+def buy_avatar():
+    user_id = int(get_jwt_identity())
+    data = request.get_json(silent=True) or {}
+    key = (data.get("avatar_key") or "").strip()
+
+    avatar = AVATARS_BY_KEY.get(key)
+    if not avatar:
+        return jsonify({"message": "Unknown avatar"}), 400
+
+    user = User.query.get(user_id)
+    if UserAvatar.query.filter_by(user_id=user_id, avatar_key=key).first():
+        return jsonify({"message": "You already own this avatar"}), 400
+    if (user.points or 0) < avatar["price"]:
+        return jsonify({"message": "Not enough points", "code": "insufficient_points"}), 402
+
+    user.points -= avatar["price"]
+    db.session.add(UserAvatar(user_id=user_id, avatar_key=key))
+    # Equip it right away — buying an avatar you can't see would be a surprise.
+    user.avatar_selected = key
+    db.session.commit()
+    return jsonify(_progress_dict(user_id)), 200
+
+
+@gam_bp.route("/me/avatar/equip", methods=["POST"])
+@jwt_required()
+def equip_avatar():
+    user_id = int(get_jwt_identity())
+    data = request.get_json(silent=True) or {}
+    key = data.get("avatar_key")
+
+    user = User.query.get(user_id)
+    if key is None or key == "":
+        user.avatar_selected = None  # back to the initial-in-a-circle
+    else:
+        if not UserAvatar.query.filter_by(user_id=user_id, avatar_key=key).first():
+            return jsonify({"message": "You don't own that avatar"}), 400
+        user.avatar_selected = key
+    db.session.commit()
+    return jsonify(_progress_dict(user_id)), 200
