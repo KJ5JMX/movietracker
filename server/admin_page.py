@@ -61,7 +61,18 @@ ADMIN_PAGE_HTML = r"""<!DOCTYPE html>
   .dash-actions { display:flex; gap:8px; flex-wrap:wrap; }
   .pill { background:var(--green); color:#10261c; border-radius:10px;
     padding:1px 8px; font-size:11px; font-weight:700; margin-left:6px; }
+  .chart-box { position:relative; height:240px; margin:6px 0 14px; }
+  .battle-detail { border:2px solid var(--amber); border-radius:8px;
+    padding:14px; margin:0 0 14px; background:var(--bg); }
+  .battle-detail .bd-head { display:flex; justify-content:space-between;
+    align-items:center; gap:10px; margin-bottom:8px; }
+  .battle-detail .bd-title { font-size:14px; color:var(--amber); font-weight:700; }
+  .battle-detail .bd-close { cursor:pointer; color:var(--muted);
+    font-size:18px; line-height:1; background:none; border:none; padding:4px; }
+  .battle-detail .bd-chart { position:relative; height:200px; }
+  .hint { font-size:11px; color:var(--muted); margin:2px 0 6px; }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
 <div class="wrap">
@@ -125,9 +136,13 @@ ADMIN_PAGE_HTML = r"""<!DOCTYPE html>
   <!-- DASHBOARD -->
   <div class="card">
     <h2>Dashboard</h2>
-    <h3>Movie of the Week — history</h3>
+    <h3>Movie of the Week — participation</h3>
+    <div class="chart-box"><canvas id="dash-weeks-chart"></canvas></div>
     <div id="dash-weeks">Loading...</div>
     <h3 style="margin-top:18px">Battles</h3>
+    <div class="hint">Click a battle to see its vote split.</div>
+    <div class="chart-box"><canvas id="dash-battles-chart"></canvas></div>
+    <div id="dash-battle-detail" class="battle-detail" style="display:none"></div>
     <div id="dash-battles">Loading...</div>
     <div class="msg" id="dash-msg"></div>
   </div>
@@ -376,6 +391,117 @@ async function loadDashboard() {
     row.appendChild(info); row.appendChild(actions);
     battles.appendChild(row);
   });
+
+  renderDashCharts(d);
+}
+
+// ---- Dashboard charts (Chart.js from CDN; text rows above still work if it fails) ----
+let weeksChart = null, battlesChart = null, detailChart = null;
+const CHART_INK = "#bdae97", CHART_GRID = "rgba(74,63,51,0.6)";
+const GREEN = "#6A9B7F", AMBER = "#E5A050";
+
+function renderDashCharts(d) {
+  if (!window.Chart) return;
+  Chart.defaults.color = CHART_INK;
+  Chart.defaults.font.family = "-apple-system,Segoe UI,Roboto,sans-serif";
+
+  // Movie of the Week participation, oldest -> newest so it reads as a trend.
+  const weeks = (d.movies_of_week || []).slice().reverse();
+  if (weeksChart) weeksChart.destroy();
+  weeksChart = new Chart(document.getElementById("dash-weeks-chart"), {
+    type: "bar",
+    data: {
+      labels: weeks.map(w => w.week_key),
+      datasets: [{
+        label: "Completed",
+        data: weeks.map(w => w.completed),
+        backgroundColor: weeks.map(w => w.active ? AMBER : GREEN),
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: {
+          title: items => {
+            const w = weeks[items[0].dataIndex];
+            return w.title + " (" + (w.year || "?") + ")";
+          },
+          label: item => item.parsed.y + " completed",
+        } },
+      },
+      scales: {
+        x: { grid: { color: CHART_GRID } },
+        y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: CHART_GRID } },
+      },
+    },
+  });
+
+  // Battles overview: A vs B votes per battle. Click a bar to drill into it.
+  const battles = (d.battles || []).slice().reverse();
+  if (battlesChart) battlesChart.destroy();
+  battlesChart = new Chart(document.getElementById("dash-battles-chart"), {
+    type: "bar",
+    data: {
+      labels: battles.map(b => b.title || (b.a_title + " vs " + b.b_title)),
+      datasets: [
+        { label: "A", data: battles.map(b => b.a_votes), backgroundColor: GREEN, borderRadius: 4 },
+        { label: "B", data: battles.map(b => b.b_votes), backgroundColor: AMBER, borderRadius: 4 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      onClick: (evt, els) => { if (els.length) renderBattleDetail(battles[els[0].index]); },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: {
+          label: item => {
+            const b = battles[item.dataIndex];
+            const t = item.datasetIndex === 0 ? b.a_title : b.b_title;
+            return t + ": " + item.parsed.y;
+          },
+        } },
+      },
+      scales: {
+        x: { grid: { color: CHART_GRID } },
+        y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: CHART_GRID } },
+      },
+    },
+  });
+}
+
+function renderBattleDetail(b) {
+  const box = document.getElementById("dash-battle-detail");
+  const status = b.closed ? "closed" : (b.active ? "voting open" : "ended");
+  const total = (b.a_votes || 0) + (b.b_votes || 0);
+  const outcome = b.winner ? ("Winner: " + b.winner)
+    : (b.a_votes === b.b_votes ? "Tie" : "");
+  box.style.display = "block";
+  box.innerHTML =
+    '<div class="bd-head"><span class="bd-title"></span>' +
+    '<button class="bd-close" title="Close">&times;</button></div>' +
+    '<div class="hint"></div><div class="bd-chart"><canvas id="bd-canvas"></canvas></div>';
+  // textContent (not innerHTML) so a movie title can never inject markup.
+  box.querySelector(".bd-title").textContent =
+    b.title || (b.a_title + " vs " + b.b_title);
+  box.querySelector(".hint").textContent =
+    total + " votes · " + status + (outcome ? " · " + outcome : "");
+  box.querySelector(".bd-close").onclick = () => { box.style.display = "none"; };
+  if (!window.Chart) return;
+  if (detailChart) detailChart.destroy();
+  detailChart = new Chart(document.getElementById("bd-canvas"), {
+    type: "doughnut",
+    data: {
+      labels: [b.a_title, b.b_title],
+      datasets: [{ data: [b.a_votes, b.b_votes], backgroundColor: [GREEN, AMBER], borderWidth: 0 }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: "bottom" } },
+    },
+  });
+  box.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 async function loadStats() {

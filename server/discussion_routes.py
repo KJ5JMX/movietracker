@@ -168,12 +168,11 @@ def post_comment(media_type, external_id):
         return jsonify({"message": "chapter must be 1 or higher"}), 400
 
     my_progress = my_item.chapter_progress or 0
-    # POST gate: you can't comment ahead of your own reading position
-    if chapter > my_progress:
-        return jsonify({
-            "message": f"You're on chapter {my_progress} — update your progress before commenting on chapter {chapter}",
-            "code": "ahead_of_progress",
-        }), 400
+    # The chapter you attach to a comment IS your reading position: saying
+    # "I'm talking about chapter X" declares you've read to X. So a comment
+    # advances your progress rather than being rejected for running ahead.
+    # (The read gate still protects everyone else from what's past their own.)
+    new_progress = max(my_progress, chapter)
 
     body = (data.get("body") or "").strip()
     if not body:
@@ -189,6 +188,9 @@ def post_comment(media_type, external_id):
         body=body,
     )
     db.session.add(comment)
+    # Posting past your recorded position bumps it (see note above).
+    if new_progress != my_progress:
+        my_item.chapter_progress = new_progress
     db.session.commit()
 
     user = User.query.get(me_id)
@@ -219,6 +221,7 @@ def post_comment(media_type, external_id):
         "body": comment.body,
         "created_at": comment.created_at.isoformat(),
         "mine": True,
+        "my_progress": new_progress,
     }), 201
 
 

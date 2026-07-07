@@ -263,11 +263,22 @@ def complete_movie_of_week():
     db.session.commit()
 
     # Points only on the first completion (cheat-proof: bounded, once per pick).
+    # Capture the balance before/after so the app can show exactly what this
+    # watch earned, including any achievement tiers it happened to unlock.
+    from models import User
+    user = User.query.get(user_id)
+    points_before = user.points or 0
     if first_completion:
         award_points(user_id, MOW_RATING_POINTS)
-    sync_and_notify(user_id)
+    newly = sync_and_notify(user_id) or []
+    points_after = user.points or 0
 
-    return jsonify({"movie_of_week": _mow_to_dict(mow, completion)}), 200
+    return jsonify({
+        "movie_of_week": _mow_to_dict(mow, completion),
+        "points_awarded": points_after - points_before,
+        "total_points": points_after,
+        "achievements_unlocked": newly,
+    }), 200
 
 
 @festival_bp.route("/battles", methods=["GET"])

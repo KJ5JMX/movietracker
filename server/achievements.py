@@ -131,7 +131,16 @@ FLAIR_BY_KEY = {f["key"]: f for f in FLAIR}
 # a bundled PNG in the app (src/avatars.ts). Prices are easy to tune here.
 # ---------------------------------------------------------------------------
 
-_AVATAR_NAME_OVERRIDES = {"dj": "DJ"}
+# Keys now match display names, so name() falls out of key.title() for most.
+# Only keys whose display name needs punctuation or non-title casing live here.
+_AVATAR_NAME_OVERRIDES = {
+    "dj": "DJ",
+    "carls_boxers": "Carl's Boxers",
+    "wilson": "Wilson!",
+    "up": "Up!",
+    "mjolnir": "Mjölnir",
+    "detective": "The Inspector",
+}
 
 
 def _avatar(category, price, *keys):
@@ -148,20 +157,20 @@ def _avatar(category, price, *keys):
 
 AVATARS = (
     # Tier 1 — 50
-    _avatar("Characters", 50, "couch", "popcorn", "host")
-    + _avatar("Icons", 50, "ticket", "shoes", "shorts")
+    _avatar("Characters", 50, "couch_potato", "popcorn_enthusiast", "concierge")
+    + _avatar("Icons", 50, "golden_ticket", "ruby_slippers", "carls_boxers")
     # Tier 2 — 100
     + _avatar("Characters", 100, "bookworm", "punk", "poet", "anchor", "dj")
-    + _avatar("Icons", 100, "ball", "donut", "house")
+    + _avatar("Icons", 100, "wilson", "donut", "up")
     # Tier 3 — 150
-    + _avatar("Characters", 150, "ranger", "noir", "librarian", "professor")
-    + _avatar("Icons", 150, "blade", "hammer", "hoverboard")
+    + _avatar("Characters", 150, "space_ranger", "detective", "librarian", "professor")
+    + _avatar("Icons", 150, "the_force", "mjolnir", "hoverboard")
     # Tier 4 — 200
     + _avatar("Characters", 200, "rockstar", "diva", "conductor")
-    + _avatar("Icons", 200, "idol", "totem")
+    + _avatar("Icons", 200, "golden_idol", "totem")
     # Tier 5 — 250 (epics)
-    + _avatar("Characters", 250, "wizard", "director", "vampire")
-    + _avatar("Icons", 250, "raptor", "gauntlet", "ring")
+    + _avatar("Characters", 250, "merlin", "director", "dracula")
+    + _avatar("Icons", 250, "clever_girl", "infinity_gauntlet", "the_one_ring")
 )
 
 AVATARS_BY_KEY = {a["key"]: a for a in AVATARS}
