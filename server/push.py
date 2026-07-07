@@ -21,7 +21,7 @@ import jwt  # PyJWT (already a flask-jwt-extended dependency)
 from flask import current_app
 
 from config import Config
-from models import db, DeviceToken, User
+from models import db, DeviceToken, User, Notification
 
 # Canonical notification categories. The app renders a toggle per category;
 # notify() filters recipients who've turned a category off. Missing = on.
@@ -36,6 +36,18 @@ NOTIFICATION_CATEGORIES = [
     "festival",
     "likes",
 ]
+
+# Categories that also become a stored in-app notification (the center's right
+# pane). Recs/reviews live in their own tables (left pane), friend requests are
+# shown live from the pending list, and likes are surfaced on the feed already,
+# so none of those are stored here.
+FEED_CATEGORIES = {
+    "festival",
+    "achievements",
+    "movie_nights",
+    "discussions",
+    "reminders",
+}
 
 
 def _user_allows(user, category):
@@ -163,6 +175,22 @@ def notify(user_ids, title, body, data=None, app=None, category=None):
             if not user_ids:
                 return
         flask_app = app or current_app._get_current_object()
+
+        # Persist app-event notifications so the in-app center shows a feed even
+        # when APNs is unconfigured (pushes no-op without keys).
+        if category in FEED_CATEGORIES:
+            try:
+                blob = json.dumps(data) if data else None
+                for uid in set(user_ids):
+                    db.session.add(Notification(
+                        user_id=uid, category=category,
+                        title=title, body=body, data=blob,
+                    ))
+                db.session.commit()
+            except Exception as e:
+                db.session.rollback()
+                print(f"[push] notification persist failed: {e}")
+
         rows = DeviceToken.query.filter(
             DeviceToken.user_id.in_(list(set(user_ids)))
         ).all()

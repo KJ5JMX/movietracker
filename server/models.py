@@ -732,3 +732,30 @@ class ActivityLike(db.Model):
     __table_args__ = (
         db.UniqueConstraint("user_id", "item_id", name="uq_activity_like_user_item"),
     )
+
+
+class Notification(db.Model):
+    """An in-app notification for one recipient. Written by push.notify for
+    app-event categories (festival, achievements, movie_nights, discussions,
+    reminders) so the notification center shows a feed even when APNs is off.
+    Recs/reviews are NOT stored here (own tables + left pane); friend requests
+    are shown live from the pending list."""
+
+    __tablename__ = "notifications"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", name="fk_notification_user"),
+        nullable=False,
+        index=True,
+    )
+    category = db.Column(db.String, nullable=True)
+    title = db.Column(db.String, nullable=False)
+    body = db.Column(db.Text, nullable=True)
+    # JSON blob describing the deep-link target, e.g. {"type": "movie_of_week"}.
+    data = db.Column(db.Text, nullable=True)
+    read_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(
+        db.DateTime, default=datetime.utcnow, nullable=False, index=True
+    )

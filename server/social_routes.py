@@ -35,7 +35,7 @@ from sqlalchemy import or_, and_
 from push import notify
 from models import (
     db, User, Friendship, Recommendation, ReviewShare, WatchlistItem,
-    Group, GroupMember, GroupRecommendation,
+    Group, GroupMember, GroupRecommendation, Notification,
 )
 from achievements import sync_and_notify
 
@@ -796,9 +796,57 @@ def notifications_count():
     pending_friends = Friendship.query.filter_by(
         addressee_id=me_id, status="pending"
     ).count()
+    unread_app = Notification.query.filter_by(
+        user_id=me_id, read_at=None
+    ).count()
     return jsonify({
         "recs": pending_recs,
         "reviews": unread_reviews,
         "friend_requests": pending_friends,
-        "total": pending_recs + unread_reviews + pending_friends,
+        "app": unread_app,
+        "total": pending_recs + unread_reviews + pending_friends + unread_app,
     }), 200
+
+
+def notification_to_dict(n):
+    try:
+        data = json.loads(n.data) if n.data else None
+    except (ValueError, TypeError):
+        data = None
+    return {
+        "id": n.id,
+        "category": n.category,
+        "title": n.title,
+        "body": n.body,
+        "data": data,
+        "read": n.read_at is not None,
+        "created_at": n.created_at.isoformat() if n.created_at else None,
+    }
+
+
+@social_bp.route("/notifications", methods=["GET"])
+@jwt_required()
+def list_notifications():
+    """The app-event feed for the notification center's right pane, newest
+    first. Recs/reviews and friend requests are fetched separately."""
+    me_id = int(get_jwt_identity())
+    rows = (
+        Notification.query
+        .filter_by(user_id=me_id)
+        .order_by(Notification.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    return jsonify([notification_to_dict(n) for n in rows]), 200
+
+
+@social_bp.route("/notifications/read", methods=["POST"])
+@jwt_required()
+def mark_notifications_read():
+    """Mark all of my notifications read (called when the center is opened)."""
+    me_id = int(get_jwt_identity())
+    Notification.query.filter_by(user_id=me_id, read_at=None).update(
+        {"read_at": datetime.utcnow()}, synchronize_session=False
+    )
+    db.session.commit()
+    return jsonify({"message": "ok"}), 200
