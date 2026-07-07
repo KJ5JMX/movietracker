@@ -276,21 +276,100 @@ def _omdb_search_top_forgiving(query, omdb_type=None, limit=3):
     return []
 
 
+def _books_search_top(query, limit=3):
+    """Top Open Library book candidates for `query` (normalized dicts).
+
+    Lazy-imports the media_routes normalizer to avoid a circular blueprint
+    import at module load, same pattern as the cross-media /movies/search.
+    """
+    from media_routes import _ol_doc_to_dict, OPEN_LIBRARY_SEARCH_URL
+
+    try:
+        r = requests.get(
+            OPEN_LIBRARY_SEARCH_URL,
+            params={
+                "q": query,
+                "limit": limit,
+                "fields": "key,title,author_name,first_publish_year,cover_i,subject,number_of_pages_median",
+            },
+            timeout=10,
+        )
+        docs = r.json().get("docs") or []
+    except (requests.RequestException, ValueError):
+        return []
+    out = []
+    for doc in docs:
+        if doc.get("key") and doc.get("title"):
+            out.append(_ol_doc_to_dict(doc))
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _songs_search_top(query, limit=3):
+    """Top iTunes song candidates for `query` (normalized dicts)."""
+    from media_routes import _itunes_song_to_dict, ITUNES_SEARCH_URL
+
+    try:
+        r = requests.get(
+            ITUNES_SEARCH_URL,
+            params={"term": query, "entity": "song", "limit": limit},
+            timeout=10,
+        )
+        rows = r.json().get("results") or []
+    except (requests.RequestException, ValueError):
+        return []
+    out = []
+    for track in rows:
+        if track.get("trackId"):
+            out.append(_itunes_song_to_dict(track))
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _import_candidates(query, media_type):
+    """Candidate matches for one import line, honoring the requested type.
+
+    A specific type hits only its own source. 'all'/'auto' probes every source
+    and returns a merged list with the most likely guess first (movies/TV, then
+    a book, then a song), so a mis-detected line can be corrected in the review
+    UI with one 'Try next match' tap instead of silently adding the wrong item.
+    """
+    if media_type in OMDB_TYPE_MAP:  # 'movie' or 'tv'
+        return _omdb_search_top_forgiving(
+            query, omdb_type=OMDB_TYPE_MAP[media_type], limit=3
+        )
+    if media_type == "book":
+        return _books_search_top(query, limit=3)
+    if media_type == "song":
+        return _songs_search_top(query, limit=3)
+    # auto / all
+    merged = []
+    merged.extend(_omdb_search_top_forgiving(query, omdb_type=None, limit=2))
+    merged.extend(_books_search_top(query, limit=1))
+    merged.extend(_songs_search_top(query, limit=1))
+    return merged
+
+
+IMPORT_MEDIA_TYPES = {"all", "movie", "tv", "book", "song"}
+
+
 @movie_bp.route("/import", methods=["POST"])
 @jwt_required()
 def import_titles():
     """Take a list of free-form titles (e.g. pasted from Notes) and return
-    OMDb match candidates for each, so the frontend can let the user confirm
-    before bulk-adding to their watchlist."""
+    match candidates for each, so the frontend can let the user confirm before
+    bulk-adding to their watchlist.
+
+    media_type routes the lookup: 'movie'/'tv' -> OMDb, 'book' -> Open Library,
+    'song' -> iTunes, and 'all' (auto-detect) probes every source per line."""
     data = request.get_json() or {}
     lines = _expand_csv_export(data.get("lines") or [])
     media_type = data.get("media_type", "all")
 
-    omdb_type = None
-    if media_type != "all":
-        if media_type not in OMDB_TYPE_MAP:
-            return jsonify({"message": f"Invalid media_type: {media_type}"}), 400
-        omdb_type = OMDB_TYPE_MAP[media_type]
+    if media_type not in IMPORT_MEDIA_TYPES:
+        return jsonify({"message": f"Invalid media_type: {media_type}"}), 400
 
     # Clean + dedupe queries, preserving original line text for display
     seen_queries = set()
@@ -307,17 +386,16 @@ def import_titles():
         if len(queries) >= IMPORT_MAX_LINES:
             break
 
-    # Fan the OMDb lookups out in parallel. Sequentially, 25 lines x 10s
-    # worst-case timeout could hold a gunicorn thread for 4+ minutes; with 5
-    # concurrent fetches the worst case drops to ~50s. Order is preserved.
+    # Fan the lookups out in parallel. Sequentially, 50 lines x 10s worst-case
+    # timeout could hold a gunicorn thread for minutes; with 5 concurrent
+    # fetches the worst case drops sharply. Order is preserved. In auto ('all')
+    # mode each line probes up to three sources, so this is the heaviest path.
     matches = []
     if queries:
         with ThreadPoolExecutor(max_workers=5) as pool:
             candidate_lists = list(
                 pool.map(
-                    lambda e: _omdb_search_top_forgiving(
-                        e["query"], omdb_type=omdb_type, limit=3
-                    ),
+                    lambda e: _import_candidates(e["query"], media_type),
                     queries,
                 )
             )
