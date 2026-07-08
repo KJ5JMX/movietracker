@@ -398,6 +398,16 @@ def admin_streaming_health():
     return jsonify(streaming_lookup.health_check()), 200
 
 
+@admin_bp.route("/api/streaming-debug", methods=["GET"])
+@require_admin
+def admin_streaming_debug():
+    """Raw JustWatch diagnostic. Open in the browser (Access-gated) to see what
+    the provider actually returns before mapping. ?title= and ?country= optional."""
+    title = request.args.get("title", "Back to the Future")
+    country = request.args.get("country")
+    return jsonify(streaming_lookup.debug(title, country)), 200
+
+
 @admin_bp.route("/api/movie-of-week", methods=["GET"])
 @require_admin
 def admin_get_mow():

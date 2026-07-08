@@ -205,6 +205,40 @@ def lookup(imdb_id, title=None, year=None, country=None):
     return fetch(imdb_id, title, year, country)
 
 
+def debug(title="Back to the Future", country=None):
+    """Raw diagnostic: exactly what JustWatch returns before our mapping, so a
+    'no offers' result can be told apart from a mapping/anchor bug. Admin-only."""
+    country = country or getattr(Config, "STREAMING_REGION", "US")
+    out = {"title": title, "country": country, "entries": [], "error": None}
+    try:
+        import httpx
+        from simplejustwatchapi.query import (
+            prepare_search_request,
+            parse_search_response,
+        )
+        request = prepare_search_request(title, country, "en", 5, True)
+        resp = httpx.post(
+            _JW_GRAPHQL_URL, json=request, headers=_JW_HEADERS, timeout=15
+        )
+        resp.raise_for_status()
+        results = parse_search_response(resp.json()) or []
+        for r in results:
+            offers = r.offers or []
+            out["entries"].append({
+                "title": r.title,
+                "year": r.release_year,
+                "imdb_id": r.imdb_id,
+                "raw_offer_count": len(offers),
+                "monetization_types_raw": sorted(
+                    {(o.monetization_type or "?") for o in offers}
+                ),
+                "services": sorted({(o.name or "?") for o in offers})[:15],
+            })
+    except Exception as e:
+        out["error"] = repr(e)
+    return out
+
+
 def health_check():
     """Canary: does the live provider answer right now? Drives the admin status
     dot. Uses a stable, always-available title (Back to the Future, 1985)."""
