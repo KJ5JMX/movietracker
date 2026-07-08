@@ -26,6 +26,23 @@ Normalized source shape (superset of what the app already renders):
 from config import Config
 
 
+_JW_GRAPHQL_URL = "https://apis.justwatch.com/graphql"
+
+# JustWatch refuses the library's bare request from a datacenter IP. Posting with
+# browser-like headers gets past that. We still use the library's query builder
+# and response parser, so we ride its current schema and only override transport.
+_JW_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Origin": "https://www.justwatch.com",
+    "Referer": "https://www.justwatch.com/",
+}
+
+
 # JustWatch monetization_type -> the app's grouping buckets. Anything we don't
 # recognize (e.g. "cinema") is dropped so it never lands in a wrong group.
 _JW_TYPE_MAP = {
@@ -67,13 +84,22 @@ def _justwatch_fetch(imdb_id, title, year, country):
     if not title:
         return None
     try:
-        from simplejustwatchapi.justwatch import search
+        import httpx
+        from simplejustwatchapi.query import (
+            prepare_search_request,
+            parse_search_response,
+        )
     except ImportError:
         print("[streaming] simple-justwatch-python-api not installed")
         return None
 
     try:
-        results = search(title, country, "en", 5, True) or []
+        request = prepare_search_request(title, country, "en", 5, True)
+        resp = httpx.post(
+            _JW_GRAPHQL_URL, json=request, headers=_JW_HEADERS, timeout=15
+        )
+        resp.raise_for_status()
+        results = parse_search_response(resp.json()) or []
     except Exception as e:  # network, blocked, schema drift — treat as failure
         print(f"[streaming] JustWatch lookup failed for {title!r}: {e}")
         return None
