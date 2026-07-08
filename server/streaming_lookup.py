@@ -128,7 +128,9 @@ def _justwatch_fetch(imdb_id, title, year, country):
             "type": bucket,
             "region": country,
             "format": o.presentation_type or None,
-            "price": o.price_string or None,
+            # Numeric price (app formats it as $X.XX). price_string can be
+            # oddly formatted per-locale, so prefer the raw value.
+            "price": o.price_value,
             "web_url": o.url or None,
             "ios_url": o.url or None,
             "android_url": o.url or None,
