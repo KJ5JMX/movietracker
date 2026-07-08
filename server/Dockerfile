@@ -18,9 +18,13 @@ RUN pipenv install --system --deploy && pip uninstall -y pipenv
 
 # Streaming availability provider (free/unofficial JustWatch bridge). Installed
 # outside the Pipfile lock on purpose: it keeps `pipenv --deploy` valid without a
-# relock. Fold it into the Pipfile + relock on a machine with Python 3.14 when
-# you want it managed there. Depends only on httpx, already installed above.
-RUN pip install --no-cache-dir simple-justwatch-python-api
+# relock. Depends only on httpx, already installed above.
+#
+# PINNED to ==0.13 on purpose. Newer releases dropped Python 3.10 and changed
+# prepare_search_request()'s signature; unpinned, the container silently pulled a
+# newer, incompatible version and every lookup failed. Bump this only alongside a
+# matching code change in streaming_lookup.py.
+RUN pip install --no-cache-dir "simple-justwatch-python-api==0.13"
 
 COPY . .
 
