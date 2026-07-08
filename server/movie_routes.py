@@ -9,7 +9,8 @@ import requests
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from config import Config
-from models import db, StreamingCache, StreamingServiceTap
+from models import db, StreamingCache, StreamingServiceTap, WatchlistItem
+import streaming_lookup
 
 
 IMPORT_MAX_LINES = 50  # Cap to protect the OMDb quota + keep latency sane
@@ -565,8 +566,42 @@ def get_streaming(imdb_id):
         except ValueError:
             pass  # fall through and re-fetch if cached JSON is corrupt
 
-    sources = _fetch_streaming_from_watchmode(imdb_id)
+    # JustWatch needs a title to search (Watchmode used the imdb_id directly).
+    # Prefer explicit query params, else fall back to the user's own watchlist
+    # row for this title, so the app needs no change to make this work.
+    title = request.args.get("title")
+    year = request.args.get("year")
+    if not title:
+        item = WatchlistItem.query.filter_by(
+            imdb_id=imdb_id, user_id=user_id
+        ).first()
+        if item:
+            title = item.title
+            year = year or item.year
 
+    sources = streaming_lookup.lookup(imdb_id, title=title, year=year)
+
+    if sources is None:
+        # Hard failure (provider down / blocked / schema drift). Never clobber
+        # good data with nothing: serve the last cache we have, even if stale,
+        # and let the crowdsourced reports fill the gap. Silent by design so a
+        # provider outage never looks like an app bug.
+        if cache:
+            try:
+                cached_sources = json.loads(cache.data)
+            except ValueError:
+                cached_sources = []
+            return jsonify({
+                "sources": _sort_sources_by_user_taps(cached_sources, user_id),
+                "cached_at": cache.cached_at.isoformat(),
+                "cached": True,
+                "stale": True,
+            }), 200
+        return jsonify({
+            "sources": [], "cached_at": None, "cached": False, "stale": True,
+        }), 200
+
+    # Success (an empty list is valid — "found it, streaming nowhere"). Refresh.
     if cache:
         cache.data = json.dumps(sources)
         cache.cached_at = datetime.utcnow()

@@ -21,6 +21,11 @@ class Config:
     OMDB_BASE_URL = "https://www.omdbapi.com/"
     WATCHMODE_API_KEY = os.environ.get("WATCHMODE_API_KEY")
     WATCHMODE_BASE_URL = "https://api.watchmode.com/v1"
+    # Streaming availability provider. "justwatch" = free/unofficial bridge (no
+    # key needed); flip to "watchmode" once a commercial key is in place. Region
+    # is the country whose availability we surface (JustWatch is per-country).
+    STREAMING_PROVIDER = os.environ.get("STREAMING_PROVIDER", "justwatch")
+    STREAMING_REGION = os.environ.get("STREAMING_REGION", "US")
     # App-Specific Shared Secret from App Store Connect (App Information ->
     # App-Specific Shared Secret). Required by /iap/verify-receipt; while it's
     # unset, that endpoint returns 503 and the app's purchase UI stays in

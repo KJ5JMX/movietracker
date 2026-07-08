@@ -16,6 +16,12 @@ RUN pip install --no-cache-dir pipenv
 COPY Pipfile Pipfile.lock ./
 RUN pipenv install --system --deploy && pip uninstall -y pipenv
 
+# Streaming availability provider (free/unofficial JustWatch bridge). Installed
+# outside the Pipfile lock on purpose: it keeps `pipenv --deploy` valid without a
+# relock. Fold it into the Pipfile + relock on a machine with Python 3.14 when
+# you want it managed there. Depends only on httpx, already installed above.
+RUN pip install --no-cache-dir simple-justwatch-python-api
+
 COPY . .
 
 ENV FLASK_APP=app.py \

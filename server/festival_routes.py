@@ -23,6 +23,7 @@ from flask import Blueprint, request, jsonify, Response
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from config import Config
+import streaming_lookup
 from models import (
     db,
     User,
@@ -387,6 +388,14 @@ def admin_search():
     if not q.strip():
         return jsonify([]), 200
     return jsonify(_omdb_search_forgiving(q, None, "movie")), 200
+
+
+@admin_bp.route("/api/streaming-health", methods=["GET"])
+@require_admin
+def admin_streaming_health():
+    """Canary for the streaming provider — drives the status dot on the admin
+    page. Runs a real lookup, so a green dot means the pipeline works end to end."""
+    return jsonify(streaming_lookup.health_check()), 200
 
 
 @admin_bp.route("/api/movie-of-week", methods=["GET"])

@@ -52,6 +52,11 @@ ADMIN_PAGE_HTML = r"""<!DOCTYPE html>
   .row { display:flex; gap:18px; }
   .col { flex:1; }
   .msg { font-size:13px; margin-top:8px; min-height:18px; }
+  .dot { display:inline-block; width:12px; height:12px; border-radius:50%; vertical-align:middle; margin-left:12px; }
+  .dot-gray { background:#888; }
+  .dot-green { background:#3fb54f; box-shadow:0 0 6px #3fb54f88; }
+  .dot-red { background:#d24b45; box-shadow:0 0 6px #d24b4588; }
+  .health-label { font-size:12px; color:#888; vertical-align:middle; margin-left:6px; font-weight:normal; }
   .ok { color:var(--green); } .err { color:var(--danger); }
   .current { font-size:14px; color:var(--ink); margin-bottom:6px; }
   .current b { color:var(--amber); }
@@ -76,7 +81,7 @@ ADMIN_PAGE_HTML = r"""<!DOCTYPE html>
 </head>
 <body>
 <div class="wrap">
-  <h1>ShelfMates Movie Fest — Admin</h1>
+  <h1>ShelfMates Movie Fest — Admin<span id="stream-health" title="Checking streaming provider..."><span id="stream-dot" class="dot dot-gray"></span><span id="stream-health-label" class="health-label">streaming…</span></span></h1>
 
   <!-- MOVIE OF THE WEEK -->
   <div class="card">
@@ -537,6 +542,30 @@ async function loadStats() {
 }
 
 loadStats();
+
+// Streaming provider health dot: green = a live lookup just worked, red = the
+// provider is down/blocked (crowdsourced fallback covers users meanwhile).
+async function loadStreamHealth() {
+  const dot = document.getElementById("stream-dot");
+  const label = document.getElementById("stream-health-label");
+  const wrap = document.getElementById("stream-health");
+  try {
+    const h = await api("/streaming-health");
+    const ok = !!h.ok;
+    dot.className = "dot " + (ok ? "dot-green" : "dot-red");
+    label.textContent = ok ? (h.provider + " ok") : (h.provider + " down");
+    label.style.color = ok ? "#3fb54f" : "#d24b45";
+    wrap.title = h.provider + ": " + h.detail + " (" + h.sample_count +
+      " offers) — checked " + h.checked_at;
+  } catch (e) {
+    dot.className = "dot dot-red";
+    label.textContent = "check failed";
+    label.style.color = "#d24b45";
+    wrap.title = "Health check request failed: " + (e.message || e);
+  }
+}
+loadStreamHealth();
+setInterval(loadStreamHealth, 120000);
 loadCurrentMotm();
 loadDashboard();
 </script>
