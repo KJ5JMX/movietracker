@@ -234,11 +234,13 @@ def roll():
     if err:
         return jsonify({"message": err}), 400
 
-    # Movie Night is a Pro feature end to end (solo or group).
+    # Solo roll is free; rolling against a friend's list is Pro.
     me = User.query.get(me_id)
-    if not me or not me.is_pro:
+    if not me:
+        return jsonify({"message": "User not found"}), 404
+    if len(user_ids) > 1 and not me.is_pro:
         return jsonify({
-            "message": "Movie Night requires Pro",
+            "message": "Movie Night with friends is a Pro feature",
             "code": "pro_required",
         }), 402
 
@@ -329,9 +331,9 @@ def schedule_night():
     user_ids, err = _validate_participants(me_id, data.get("participant_ids") or [])
     if err:
         return jsonify({"message": err}), 400
-    if not me.is_pro:
+    if len(user_ids) > 1 and not me.is_pro:
         return jsonify({
-            "message": "Movie Night requires Pro",
+            "message": "Movie Night with friends is a Pro feature",
             "code": "pro_required",
         }), 402
 
@@ -384,10 +386,10 @@ def create_session():
     if err:
         return jsonify({"message": err}), 400
 
-    # Movie Night is a Pro feature end to end (solo or group).
-    if not me.is_pro:
+    # Solo is free; a session that includes friends is Pro.
+    if len(user_ids) > 1 and not me.is_pro:
         return jsonify({
-            "message": "Movie Night requires Pro",
+            "message": "Movie Night with friends is a Pro feature",
             "code": "pro_required",
         }), 402
 
