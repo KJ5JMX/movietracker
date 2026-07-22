@@ -1,4 +1,4 @@
-"""ShelfMates Movie Fest — Movie of the Week + monthly Battles.
+"""Bardo Movie Fest — Movie of the Week + monthly Battles.
 
 Two blueprints:
   festival_bp (/festival)  public, JWT-protected, used by the app
@@ -309,6 +309,61 @@ def get_battles():
     return jsonify({"battles": out}), 200
 
 
+@festival_bp.route("/battles/history", methods=["GET"])
+@jwt_required()
+def battles_history():
+    """Every battle this user has voted in, newest first.
+
+    Voting is what puts a battle in your history, so one you skipped never
+    appears. Includes battles that are still open (they carry closed=false) —
+    the fest card hides itself once you've voted, so this is the only place a
+    voted-but-open battle can still be found.
+
+    Adds three things on top of the usual battle shape:
+      winner      'a' | 'b' | 'tie', or None while voting is still open
+      my_pick_won bool, or None if open/tied
+      week_key    ISO week the battle opened, e.g. '2026-W29'
+    """
+    user_id = int(get_jwt_identity())
+
+    my_votes = {
+        v.battle_id: v.choice
+        for v in BattleVote.query.filter_by(user_id=user_id).all()
+    }
+    if not my_votes:
+        return jsonify({"battles": []}), 200
+
+    battles = (
+        Battle.query.filter(Battle.id.in_(list(my_votes.keys())))
+        .order_by(Battle.created_at.desc())
+        .all()
+    )
+
+    out = []
+    for b in battles:
+        counts = _vote_counts(b.id)
+        d = _battle_to_dict(b, my_votes.get(b.id), counts)
+        a_votes, b_votes = counts.get("a", 0), counts.get("b", 0)
+
+        if not d["closed"]:
+            d["winner"] = None
+            d["my_pick_won"] = None
+        else:
+            d["winner"] = (
+                "a" if a_votes > b_votes else "b" if b_votes > a_votes else "tie"
+            )
+            d["my_pick_won"] = (
+                None if d["winner"] == "tie" else d["winner"] == my_votes.get(b.id)
+            )
+
+        d["created_at"] = b.created_at.isoformat() + "Z"
+        iso_year, iso_week = b.created_at.isocalendar()[:2]
+        d["week_key"] = f"{iso_year}-W{iso_week:02d}"
+        out.append(d)
+
+    return jsonify({"battles": out}), 200
+
+
 @festival_bp.route("/battles/<int:battle_id>/vote", methods=["POST"])
 @jwt_required()
 def vote_battle(battle_id):
@@ -337,13 +392,26 @@ def vote_battle(battle_id):
     db.session.commit()
 
     # Points only on the first vote per battle (changing your vote earns nothing).
+    # Capture the balance either side so the app can show exactly what this vote
+    # earned, including any achievement tier it happened to unlock. The client
+    # must read points_awarded rather than assume BATTLE_RATING_POINTS: a
+    # re-vote earns 0 and must not claim otherwise.
+    from models import User
+    user = User.query.get(user_id)
+    points_before = user.points or 0
     if first_vote:
         award_points(user_id, BATTLE_RATING_POINTS)
-    sync_and_notify(user_id)
+    newly = sync_and_notify(user_id) or []
+    points_after = user.points or 0
 
-    return jsonify(
-        _battle_to_dict(battle, choice, _vote_counts(battle_id))
-    ), 200
+    # Spread rather than nest: the battle dict has always been top-level here,
+    # so keep it that way and add the new keys alongside it.
+    return jsonify({
+        **_battle_to_dict(battle, choice, _vote_counts(battle_id)),
+        "points_awarded": points_after - points_before,
+        "total_points": points_after,
+        "achievements_unlocked": newly,
+    }), 200
 
 
 # ===========================================================================
@@ -625,6 +693,54 @@ def admin_notify_mow():
         category="festival", data={"type": "movie_of_week"},
     )
     return jsonify({"message": "Notification sent"}), 200
+
+
+@admin_bp.route("/api/notify/broadcast", methods=["POST"])
+@require_admin
+def admin_notify_broadcast():
+    """Send a custom announcement to users: maintenance notices, news, etc.
+    Pushes to every registered device AND stores an in-app notification so
+    users without push still see it in the notification center. There is no
+    per-category user toggle for these, so keep them to real announcements."""
+    data = request.get_json(silent=True) or {}
+    title = (data.get("title") or "").strip()
+    body = (data.get("body") or "").strip()
+    audience = (data.get("audience") or "all").strip().lower()
+
+    if not title:
+        return jsonify({"message": "Title is required"}), 400
+    if len(title) > 120:
+        return jsonify({"message": "Title too long (max 120 characters)"}), 400
+    if len(body) > 500:
+        return jsonify({"message": "Message too long (max 500 characters)"}), 400
+
+    pro_statuses = ("comp", "paid", "trial")
+    if audience == "pro":
+        rows = User.query.with_entities(User.id).filter(
+            User.pro_status.in_(pro_statuses)
+        ).all()
+    elif audience == "free":
+        rows = User.query.with_entities(User.id).filter(
+            db.or_(User.pro_status.is_(None),
+                   User.pro_status.notin_(pro_statuses))
+        ).all()
+    else:
+        audience = "all"
+        rows = User.query.with_entities(User.id).all()
+
+    user_ids = [r.id for r in rows]
+    if not user_ids:
+        return jsonify({"message": "No users match that audience"}), 404
+
+    from push import notify
+    notify(
+        user_ids, title, body or None,
+        category="announcements", data={"type": "announcement"},
+    )
+    return jsonify({
+        "message": "Announcement sent to %d %s user(s)" % (len(user_ids), audience),
+        "recipients": len(user_ids),
+    }), 200
 
 
 @admin_bp.route("/api/stats", methods=["GET"])

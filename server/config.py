@@ -52,12 +52,12 @@ class Config:
     # (safe for dev/tests). Get the key from resend.com and verify the sending
     # domain there first.
     #   RESEND_API_KEY:   API key from the Resend dashboard
-    #   RESET_FROM_EMAIL: verified sender, e.g. 'ShelfMates <noreply@thenobodyprojects.com>'
+    #   RESET_FROM_EMAIL: verified sender, e.g. 'Bardo <noreply@thenobodyprojects.com>'
     #   APP_PUBLIC_URL:   public base URL the reset link points at (this backend)
     #   RESET_TOKEN_TTL_MINUTES: how long a reset link stays valid
     RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
     RESET_FROM_EMAIL = os.environ.get(
-        "RESET_FROM_EMAIL", "ShelfMates <noreply@thenobodyprojects.com>"
+        "RESET_FROM_EMAIL", "Bardo <noreply@thenobodyprojects.com>"
     )
     APP_PUBLIC_URL = os.environ.get(
         "APP_PUBLIC_URL", "https://cuedup-api.thenobodyprojects.com"
@@ -89,7 +89,7 @@ class Config:
         if s.strip()
     ]
 
-    # ShelfMates Movie Fest admin panel (/admin). Protected at the edge by
+    # Bardo Movie Fest admin panel (/admin). Protected at the edge by
     # Cloudflare Access; the app double-checks the authenticated email Cloudflare
     # injects against this allowlist. ADMIN_TOKEN is a local-only fallback for
     # hitting /admin directly on the box (e.g. curl) without Cloudflare in front.

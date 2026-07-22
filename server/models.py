@@ -510,7 +510,7 @@ class StreamingAvailabilityReport(db.Model):
 
 
 # ---------------------------------------------------------------------------
-# ShelfMates Movie Fest — admin-curated Movie of the Week + monthly Battles.
+# Bardo Movie Fest — admin-curated Movie of the Week + monthly Battles.
 # All curation is hand-set by the admin (no crowd needed); the curated
 # `streaming` field is the authoritative where-to-watch for festival titles,
 # stored as a JSON list of platform values (netflix|hulu|amazon|hbo|disney|other).

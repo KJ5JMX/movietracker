@@ -1,4 +1,4 @@
-"""The ShelfMates Movie Fest admin page — a single self-contained HTML/JS page
+"""The Bardo Movie Fest admin page — a single self-contained HTML/JS page
 served at /admin (behind Cloudflare Access). No build step, no framework. All
 fetches are same-origin to /admin/api/* so they ride the same Access session."""
 
@@ -7,7 +7,7 @@ ADMIN_PAGE_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>ShelfMates Movie Fest — Admin</title>
+<title>Bardo Movie Fest — Admin</title>
 <style>
   :root {
     --bg:#1F1813; --card:#2D2620; --ink:#F0E6D5; --muted:#bdae97;
@@ -81,7 +81,25 @@ ADMIN_PAGE_HTML = r"""<!DOCTYPE html>
 </head>
 <body>
 <div class="wrap">
-  <h1>ShelfMates Movie Fest — Admin<span id="stream-health" title="Checking streaming provider..."><span id="stream-dot" class="dot dot-gray"></span><span id="stream-health-label" class="health-label">streaming…</span></span></h1>
+  <h1>Bardo Movie Fest — Admin<span id="stream-health" title="Checking streaming provider..."><span id="stream-dot" class="dot dot-gray"></span><span id="stream-health-label" class="health-label">streaming…</span></span></h1>
+
+  <!-- ANNOUNCEMENTS -->
+  <div class="card">
+    <h2>Send Announcement</h2>
+    <div class="hint">Pushes to every device and shows in the in-app notification center. Good for maintenance notices and news. Users cannot mute these.</div>
+    <label>Audience</label>
+    <select id="ann-audience">
+      <option value="all">All users</option>
+      <option value="pro">Pro users only</option>
+      <option value="free">Free users only</option>
+    </select>
+    <label>Title</label>
+    <input type="text" id="ann-title" maxlength="120" placeholder="Scheduled maintenance" />
+    <label>Message</label>
+    <textarea id="ann-body" maxlength="500" placeholder="Bardo will be down for maintenance on Aug 3, 9-10pm CT. Back shortly after."></textarea>
+    <div style="margin-top:12px"><button id="ann-send">Send announcement</button></div>
+    <div class="msg" id="ann-msg"></div>
+  </div>
 
   <!-- MOVIE OF THE WEEK -->
   <div class="card">
@@ -564,6 +582,22 @@ async function loadStreamHealth() {
     wrap.title = "Health check request failed: " + (e.message || e);
   }
 }
+document.getElementById("ann-send").onclick = async () => {
+  const title = document.getElementById("ann-title").value.trim();
+  const body = document.getElementById("ann-body").value.trim();
+  const audience = document.getElementById("ann-audience").value;
+  if (!title) { setMsg("ann-msg", "Title is required.", false); return; }
+  const who = audience === "all" ? "ALL users" : (audience + " users");
+  if (!confirm("Send this announcement to " + who + "? It pushes to their phones.")) return;
+  setMsg("ann-msg", "Sending...", true);
+  try {
+    const r = await api("/notify/broadcast", {method:"POST", body:{title, body, audience}});
+    setMsg("ann-msg", r.message || "Sent.", true);
+    document.getElementById("ann-title").value = "";
+    document.getElementById("ann-body").value = "";
+  } catch (e) { setMsg("ann-msg", e.message || "Failed.", false); }
+};
+
 loadStreamHealth();
 setInterval(loadStreamHealth, 120000);
 loadCurrentMotm();

@@ -492,7 +492,7 @@ _GENERIC_FORGOT_MSG = (
 
 
 def _html_page(title, body_html, status=200):
-    """Minimal server-rendered page in the ShelfMates palette."""
+    """Minimal server-rendered page in the Bardo palette."""
     html = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -646,7 +646,7 @@ def reset_submit():
 
     body = """
   <h1>Password updated</h1>
-  <p>Your password has been changed. Head back to the ShelfMates app and log in
+  <p>Your password has been changed. Head back to the Bardo app and log in
   with your new password.</p>"""
     return _html_page("Password updated", body)
 
@@ -695,14 +695,14 @@ def _verify_identity_token(token, jwks_url, allowed_auds, allowed_issuers):
 def _unique_username_from(email):
     """A safe, unique starter username for a new social account. The user
     renames it during onboarding; this just has to be valid and not collide."""
-    base = email.split("@")[0] if email else "shelfmate"
-    base = re.sub(r"[^A-Za-z0-9_]", "", base)[:20] or "shelfmate"
+    base = email.split("@")[0] if email else "bardo"
+    base = re.sub(r"[^A-Za-z0-9_]", "", base)[:20] or "bardo"
     candidate = base
     for _ in range(50):
         if not User.query.filter(func.lower(User.username) == candidate.lower()).first():
             return candidate
         candidate = f"{base}{secrets.randbelow(10000)}"
-    return f"shelfmate{secrets.token_hex(4)}"
+    return f"bardo{secrets.token_hex(4)}"
 
 
 def _email_taken(email, exclude_id=None):

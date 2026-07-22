@@ -1,4 +1,4 @@
-"""ShelfMates achievements + flair catalog and awarding logic.
+"""Bardo achievements + flair catalog and awarding logic.
 
 Two systems:
   Achievements — earned automatically by hitting count thresholds ("ladders").

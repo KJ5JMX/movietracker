@@ -47,6 +47,7 @@ FEED_CATEGORIES = {
     "movie_nights",
     "discussions",
     "reminders",
+    "announcements",
 }
 
 

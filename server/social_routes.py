@@ -250,7 +250,7 @@ def send_friend_request():
     db.session.commit()
     me = User.query.get(me_id)
     notify([target.id], "New friend request",
-           f"{_push_name(me)} wants to be shelf mates",
+           f"{_push_name(me)} wants a seat at your table",
            category="friend_requests")
     return jsonify({
         "message": "Friend request sent",

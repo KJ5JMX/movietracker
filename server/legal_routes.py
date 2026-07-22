@@ -21,7 +21,7 @@ from flask import Blueprint, Response
 legal_bp = Blueprint("legal", __name__)
 
 # ---- Set these for your listing ---------------------------------------------
-APP_NAME = "ShelfMates"
+APP_NAME = "Bardo"
 DEVELOPER = "The Nobody Projects"
 CONTACT_EMAIL = "theshelfmateapp@gmail.com"
 GOVERNING_LAW = "the State of Texas, USA"  # TODO: set to your actual state/country
@@ -30,7 +30,7 @@ EFFECTIVE_DATE = "June 19, 2026"
 
 
 def _page(title, body_html):
-    """One server-rendered page in the ShelfMates palette, mobile-friendly."""
+    """One server-rendered page in the Bardo palette, mobile-friendly."""
     html = f"""<!doctype html>
 <html lang="en">
 <head>
