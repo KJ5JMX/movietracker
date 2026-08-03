@@ -8,8 +8,16 @@ from datetime import datetime, timedelta
 import requests
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from sqlalchemy import or_
 from config import Config
-from models import db, StreamingCache, StreamingServiceTap, WatchlistItem
+from models import (
+    db,
+    StreamingCache,
+    StreamingServiceTap,
+    WatchlistItem,
+    User,
+    Friendship,
+)
 import streaming_lookup
 
 
@@ -414,6 +422,56 @@ def import_titles():
     }), 200
 
 
+def _fetch_tmdb_financials(imdb_id):
+    """Budget + worldwide revenue from TMDB, matched by IMDb ID.
+
+    OMDb's BoxOffice is domestic-lifetime only; TMDB carries the production
+    budget and worldwide gross, which together unlock the derived stats
+    (international split, ROI) on the movie page. Two cheap calls: /find maps
+    the IMDb ID to a TMDB id, /movie/<id> returns the financials.
+
+    Returns {"budget": int|None, "revenue": int|None, "tmdb_id": int|None}.
+    Any miss (no key, no match, network error, TMDB's 0-for-unknown) collapses
+    to None so the caller can merge the result unconditionally.
+    """
+    empty = {"budget": None, "revenue": None, "tmdb_id": None, "backdrop": None}
+    if not Config.TMDB_API_KEY:
+        return empty
+    try:
+        find = requests.get(
+            f"{Config.TMDB_BASE_URL}/find/{imdb_id}",
+            params={"api_key": Config.TMDB_API_KEY, "external_source": "imdb_id"},
+            timeout=10,
+        ).json()
+    except (requests.RequestException, ValueError):
+        return empty
+    results = find.get("movie_results") if isinstance(find, dict) else None
+    if not results:
+        return empty
+    tmdb_id = results[0].get("id")
+    if not tmdb_id:
+        return empty
+    try:
+        details = requests.get(
+            f"{Config.TMDB_BASE_URL}/movie/{tmdb_id}",
+            params={"api_key": Config.TMDB_API_KEY},
+            timeout=10,
+        ).json()
+    except (requests.RequestException, ValueError):
+        return empty
+    if not isinstance(details, dict):
+        return empty
+    # TMDB uses 0 to mean "unknown"; normalize those to None.
+    backdrop = details.get("backdrop_path")
+    return {
+        "budget": details.get("budget") or None,
+        "revenue": details.get("revenue") or None,
+        "tmdb_id": tmdb_id,
+        # Wide cinematic still for a page hero. w780 is plenty for phone widths.
+        "backdrop": f"https://image.tmdb.org/t/p/w780{backdrop}" if backdrop else None,
+    }
+
+
 @movie_bp.route("/<imdb_id>", methods=["GET"])
 @jwt_required()
 def get_movie(imdb_id):
@@ -446,6 +504,12 @@ def get_movie(imdb_id):
         runtime_minutes = int(digits) if digits else None
 
     omdb_type = data.get("Type")
+    # Box-office financials only make sense for films; series get null fields.
+    financials = (
+        _fetch_tmdb_financials(imdb_id)
+        if omdb_type == "movie"
+        else {"budget": None, "revenue": None, "tmdb_id": None, "backdrop": None}
+    )
     return jsonify({
         "imdb_id": data.get("imdbID"),
         "title": data.get("Title"),
@@ -471,6 +535,93 @@ def get_movie(imdb_id):
         "language": _na_to_none(data.get("Language")),
         "country": _na_to_none(data.get("Country")),
         "total_seasons": _na_to_none(data.get("totalSeasons")),
+        # Financials: OMDb gives domestic lifetime (box_office); TMDB adds
+        # worldwide gross (revenue) + production budget, keyed off the IMDb ID.
+        "budget": financials["budget"],
+        "revenue": financials["revenue"],
+        "tmdb_id": financials["tmdb_id"],
+        "backdrop": financials["backdrop"],
+    }), 200
+
+
+@movie_bp.route("/<imdb_id>/friend-ratings", methods=["GET"])
+@jwt_required()
+def get_friend_ratings(imdb_id):
+    """Average + individual friend ratings for one title.
+
+    Friends only — never the caller's own rating — over accepted friendships,
+    excluding friends who set privacy_mode='private' (same opt-out the feed
+    honors). Only rated rows count. Returns:
+        {"average": float|None, "count": int, "ratings": [
+            {"user_id", "username", "display_name", "avatar", "rating"} ...]}
+    average/count reflect only rows that actually carry a rating.
+    """
+    me_id = int(get_jwt_identity())
+    media_type = request.args.get("media_type", "movie")
+    empty = {"average": None, "count": 0, "ratings": []}
+
+    # Accepted friendships in either direction.
+    links = Friendship.query.filter(
+        or_(
+            Friendship.requester_id == me_id,
+            Friendship.addressee_id == me_id,
+        ),
+        Friendship.status == "accepted",
+    ).all()
+    friend_ids = {
+        (f.addressee_id if f.requester_id == me_id else f.requester_id)
+        for f in links
+    }
+    if not friend_ids:
+        return jsonify(empty), 200
+
+    # Respect the "private" opt-out.
+    private_ids = {
+        u.id
+        for u in User.query.with_entities(User.id)
+        .filter(User.id.in_(friend_ids), User.privacy_mode == "private")
+        .all()
+    }
+    friend_ids -= private_ids
+    if not friend_ids:
+        return jsonify(empty), 200
+
+    items = (
+        WatchlistItem.query.filter(
+            WatchlistItem.user_id.in_(friend_ids),
+            WatchlistItem.imdb_id == imdb_id,
+            WatchlistItem.media_type == media_type,
+            WatchlistItem.rating.isnot(None),
+        ).all()
+    )
+    if not items:
+        return jsonify(empty), 200
+
+    users_by_id = {
+        u.id: u
+        for u in User.query.filter(
+            User.id.in_([it.user_id for it in items])
+        ).all()
+    }
+    ratings = []
+    total = 0
+    for it in items:
+        u = users_by_id.get(it.user_id)
+        total += it.rating
+        ratings.append({
+            "user_id": it.user_id,
+            "username": u.username if u else None,
+            "display_name": u.display_name if u else None,
+            "avatar": u.avatar_selected if u else None,
+            "rating": it.rating,
+        })
+    # Fans first when the list is expanded.
+    ratings.sort(key=lambda r: r["rating"], reverse=True)
+
+    return jsonify({
+        "average": round(total / len(items), 1),
+        "count": len(items),
+        "ratings": ratings,
     }), 200
 
 

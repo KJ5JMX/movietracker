@@ -19,6 +19,14 @@ class Config:
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(days=30)
     OMDB_API_KEY = os.environ.get("OMDB_API_KEY")
     OMDB_BASE_URL = "https://www.omdbapi.com/"
+    # TMDB fills the box-office gap OMDb leaves: OMDb's BoxOffice is
+    # domestic-lifetime only, while TMDB carries production budget + worldwide
+    # revenue. Matched to a title by its IMDb ID (/find). Free for
+    # non-commercial use; attribution to TMDB is required wherever the data
+    # shows. While TMDB_API_KEY is unset, the movie endpoint still works and
+    # just returns null budget/revenue (the stats section degrades gracefully).
+    TMDB_API_KEY = os.environ.get("TMDB_API_KEY")
+    TMDB_BASE_URL = "https://api.themoviedb.org/3"
     WATCHMODE_API_KEY = os.environ.get("WATCHMODE_API_KEY")
     WATCHMODE_BASE_URL = "https://api.watchmode.com/v1"
     # Streaming availability provider. "justwatch" = free/unofficial bridge (no
