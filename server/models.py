@@ -342,12 +342,17 @@ class GroupRecommendation(db.Model):
 
 
 class DiscussionComment(db.Model):
-    """Chapter-tagged comment on a book (Sierra's spoiler-safe book club).
+    """A message in a book's friend club (the mini book club).
 
-    Visibility rules live in discussion_routes, enforced server-side:
-    - readers see comments from THEIR friends (and themselves) only
-    - readers see comments tagged <= their own chapter_progress
-    - posters can't tag a chapter above their own progress
+    Ungated group chat: readers see every comment from THEIR friends (and
+    themselves) on that book, regardless of who is further along. Spoiler
+    control is opt-in and per-message (is_spoiler) rather than a hard chapter
+    gate — the poster decides when a line needs covering.
+
+    `chapter` is kept as lightweight metadata: the reading position of the
+    poster at the time they wrote the comment. It no longer gates visibility;
+    the "race" (who's furthest along, who finished first) is driven off each
+    reader's WatchlistItem.chapter_progress / watch_status instead.
     """
 
     __tablename__ = "discussion_comments"
@@ -367,10 +372,54 @@ class DiscussionComment(db.Model):
     )
     chapter = db.Column(db.Integer, nullable=False)
     body = db.Column(db.Text, nullable=False)
+    # Opt-in per-message spoiler cover. When true the client blurs/covers the
+    # body until the reader taps to reveal. No server-side hiding — a spoiler
+    # is a courtesy flag, not a gate.
+    is_spoiler = db.Column(
+        db.Boolean, default=False, server_default="0", nullable=False
+    )
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     __table_args__ = (
         db.Index("ix_discussion_item", "imdb_id", "media_type"),
+    )
+
+
+class DiscussionReaction(db.Model):
+    """An emoji reaction on a discussion comment (long-press a message to add).
+
+    Visibility follows the same friend graph as the comments themselves: a
+    reader tallies reactions left by their friends (and their own). One row per
+    (comment, user, emoji) — the unique constraint makes a repeat a no-op and
+    lets a toggle simply delete the row.
+    """
+
+    __tablename__ = "discussion_reactions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    comment_id = db.Column(
+        db.Integer,
+        db.ForeignKey(
+            "discussion_comments.id",
+            name="fk_discussion_reaction_comment",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", name="fk_discussion_reaction_user"),
+        nullable=False,
+        index=True,
+    )
+    emoji = db.Column(db.String, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "comment_id", "user_id", "emoji", name="uq_discussion_reaction"
+        ),
     )
 
 

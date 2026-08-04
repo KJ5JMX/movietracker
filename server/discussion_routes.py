@@ -1,33 +1,39 @@
-"""
-Spoiler-safe friend discussions on books — chapter-gated, friends-only.
+"""Friend book club — an ungated group chat on a shared book.
 
-The mechanic (two gates, both enforced HERE, never client-side):
-  POST gate: a comment's chapter can't exceed the poster's own
-             chapter_progress on that book. You can't spoil past where
-             you've read.
-  READ gate: a reader only receives comments tagged <= their own
-             chapter_progress. Comments ahead of them are returned as a
-             locked teaser (chapters + count only, never the body).
-
-Visibility follows the friendship graph: each reader sees comments from
-THEIR friends (plus their own). Having the book on your list is the only
-membership required — the "book club" materializes when friends share a
-book.
+Model (all enforced HERE, server-side):
+  Membership: the book has to be on your list to read and post. Your shelf is
+              the membership card; the club materializes when friends share a
+              book.
+  Visibility: you see every comment from YOUR friends (and yourself) on that
+              book. No chapter gate — the chat is one shared room.
+  Spoilers:   opt-in and per-message. A comment can carry is_spoiler=true, and
+              the client covers it until the reader taps to reveal. The body is
+              still sent; a spoiler flag is a courtesy, not a lock.
+  The race:   who's furthest along, and who finished first, is read off each
+              reader's WatchlistItem (chapter_progress + watch_status). Marking
+              the book Read (watch_status == 'watched') is crossing the line —
+              first to do it wins. Positions are motivation, never a gate.
 
 Endpoints (JWT required):
-  GET    /discussions/book/<work_id>      thread, gated for the caller
-  POST   /discussions/book/<work_id>      { chapter, body }
-  DELETE /discussions/comment/<id>        own comments only
+  GET    /discussions/<media_type>/<external_id>   thread + readers + reactions
+  POST   /discussions/<media_type>/<external_id>   { body, is_spoiler?, chapter? }
+  POST   /discussions/comment/<id>/react           { emoji }  (toggle)
+  DELETE /discussions/comment/<id>                 own comments only
 """
-
-from datetime import datetime
 
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from sqlalchemy import or_, and_
+from sqlalchemy import or_
 
 from push import notify
-from models import db, User, WatchlistItem, Friendship, DiscussionComment
+from models import (
+    db,
+    User,
+    WatchlistItem,
+    Friendship,
+    DiscussionComment,
+    DiscussionReaction,
+)
 
 
 discussion_bp = Blueprint("discussions", __name__, url_prefix="/discussions")
@@ -37,6 +43,8 @@ discussion_bp = Blueprint("discussions", __name__, url_prefix="/discussions")
 DISCUSSABLE_TYPES = {"book"}
 
 MAX_BODY_LEN = 2000
+MAX_EMOJI_LEN = 16
+FINISHED_STATUS = "watched"  # books label this "Read"
 
 
 def _friend_ids(me_id):
@@ -66,6 +74,37 @@ def _user_summary(user):
     }
 
 
+def _reactions_for(comment_ids, visible_ids, me_id):
+    """Tally reactions per comment, counting only friends-and-me.
+
+    Returns { comment_id: [ {emoji, count, reacted}, ... ] }, emojis ordered by
+    first-seen so the row is stable. `reacted` is whether the caller is in the
+    tally for that emoji.
+    """
+    if not comment_ids:
+        return {}
+    rows = (
+        DiscussionReaction.query
+        .filter(
+            DiscussionReaction.comment_id.in_(comment_ids),
+            DiscussionReaction.user_id.in_(visible_ids),
+        )
+        .order_by(DiscussionReaction.id.asc())
+        .all()
+    )
+    out = {}
+    for r in rows:
+        by_emoji = out.setdefault(r.comment_id, {})
+        entry = by_emoji.get(r.emoji)
+        if entry is None:
+            entry = {"emoji": r.emoji, "count": 0, "reacted": False}
+            by_emoji[r.emoji] = entry
+        entry["count"] += 1
+        if r.user_id == me_id:
+            entry["reacted"] = True
+    return {cid: list(emap.values()) for cid, emap in out.items()}
+
+
 @discussion_bp.route("/<media_type>/<external_id>", methods=["GET"])
 @jwt_required()
 def get_discussion(media_type, external_id):
@@ -79,10 +118,12 @@ def get_discussion(media_type, external_id):
         return jsonify({"message": "Add this to your list to join the discussion"}), 403
 
     my_progress = my_item.chapter_progress or 0
+    my_finished = my_item.watch_status == FINISHED_STATUS
+    my_finished_at = my_item.watched_at.isoformat() if my_item.watched_at else None
     friends = _friend_ids(me_id)
 
-    # Friends who also have this book, with their progress (positions are
-    # never spoilers — they're motivation)
+    # Friends who also have this book, with their race position. Positions are
+    # never spoilers — they're motivation. finished_at is how we rank the win.
     readers = []
     if friends:
         friend_items = (
@@ -98,10 +139,13 @@ def get_discussion(media_type, external_id):
                 User.id.in_([i.user_id for i in friend_items])
             ).all()
         } if friend_items else {}
-        readers = [{
-            "user": _user_summary(reader_users.get(i.user_id)),
-            "chapter_progress": i.chapter_progress or 0,
-        } for i in friend_items]
+        for i in friend_items:
+            readers.append({
+                "user": _user_summary(reader_users.get(i.user_id)),
+                "chapter_progress": i.chapter_progress or 0,
+                "finished": i.watch_status == FINISHED_STATUS,
+                "finished_at": i.watched_at.isoformat() if i.watched_at else None,
+            })
 
     visible_ids = friends | {me_id}
     all_comments = (
@@ -111,7 +155,7 @@ def get_discussion(media_type, external_id):
             DiscussionComment.media_type == media_type,
             DiscussionComment.user_id.in_(visible_ids),
         )
-        .order_by(DiscussionComment.chapter.asc(), DiscussionComment.created_at.asc())
+        .order_by(DiscussionComment.created_at.asc())
         .all()
     )
 
@@ -121,30 +165,27 @@ def get_discussion(media_type, external_id):
         ).all()
     } if all_comments else {}
 
-    visible, locked_chapters = [], []
-    for c in all_comments:
-        # READ gate: own comments always visible; friends' only at/below my progress
-        if c.user_id == me_id or c.chapter <= my_progress:
-            visible.append({
-                "id": c.id,
-                "user": _user_summary(commenters.get(c.user_id)),
-                "chapter": c.chapter,
-                "body": c.body,
-                "created_at": c.created_at.isoformat() if c.created_at else None,
-                "mine": c.user_id == me_id,
-            })
-        else:
-            # Teaser only: WHERE the conversation is, never WHAT it says
-            locked_chapters.append(c.chapter)
+    reactions = _reactions_for(
+        [c.id for c in all_comments], visible_ids, me_id
+    )
+
+    comments = [{
+        "id": c.id,
+        "user": _user_summary(commenters.get(c.user_id)),
+        "chapter": c.chapter,
+        "body": c.body,
+        "is_spoiler": bool(c.is_spoiler),
+        "reactions": reactions.get(c.id, []),
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+        "mine": c.user_id == me_id,
+    } for c in all_comments]
 
     return jsonify({
         "my_progress": my_progress,
+        "my_finished": my_finished,
+        "my_finished_at": my_finished_at,
         "readers": readers,
-        "comments": visible,
-        "locked": {
-            "count": len(locked_chapters),
-            "chapters": sorted(set(locked_chapters)),
-        },
+        "comments": comments,
     }), 200
 
 
@@ -160,19 +201,6 @@ def post_comment(media_type, external_id):
         return jsonify({"message": "Add this to your list to join the discussion"}), 403
 
     data = request.get_json(silent=True) or {}
-    try:
-        chapter = int(data.get("chapter"))
-    except (TypeError, ValueError):
-        return jsonify({"message": "chapter must be a number"}), 400
-    if chapter < 1:
-        return jsonify({"message": "chapter must be 1 or higher"}), 400
-
-    my_progress = my_item.chapter_progress or 0
-    # The chapter you attach to a comment IS your reading position: saying
-    # "I'm talking about chapter X" declares you've read to X. So a comment
-    # advances your progress rather than being rejected for running ahead.
-    # (The read gate still protects everyone else from what's past their own.)
-    new_progress = max(my_progress, chapter)
 
     body = (data.get("body") or "").strip()
     if not body:
@@ -180,49 +208,101 @@ def post_comment(media_type, external_id):
     if len(body) > MAX_BODY_LEN:
         return jsonify({"message": f"Comment too long (max {MAX_BODY_LEN} characters)"}), 400
 
+    is_spoiler = bool(data.get("is_spoiler"))
+
+    # chapter is optional metadata now — the poster's position when they wrote
+    # it. Default to their recorded progress. Never gates anything.
+    my_progress = my_item.chapter_progress or 0
+    try:
+        chapter = int(data.get("chapter"))
+        if chapter < 0:
+            chapter = my_progress
+    except (TypeError, ValueError):
+        chapter = my_progress
+
     comment = DiscussionComment(
         user_id=me_id,
         imdb_id=external_id,
         media_type=media_type,
         chapter=chapter,
         body=body,
+        is_spoiler=is_spoiler,
     )
     db.session.add(comment)
-    # Posting past your recorded position bumps it (see note above).
-    if new_progress != my_progress:
-        my_item.chapter_progress = new_progress
     db.session.commit()
 
     user = User.query.get(me_id)
 
-    # Notify friends who share this book AND have read at least this far.
-    # Same spoiler gate as the read path: nobody hears about a chapter they
-    # have not reached.
+    # Notify friends who share this book. Ungated: everyone in the club hears
+    # about a new message. Spoiler messages push a neutral preview so the
+    # notification itself never spoils.
     friend_ids = _friend_ids(me_id)
     if friend_ids:
-        eligible = WatchlistItem.query.filter(
+        club = WatchlistItem.query.filter(
             WatchlistItem.user_id.in_(friend_ids),
             WatchlistItem.imdb_id == external_id,
             WatchlistItem.media_type == media_type,
-            WatchlistItem.chapter_progress >= chapter,
         ).all()
-        book_title = my_item.title or "a book you're reading"
+        book_title = my_item.title or "your book club"
         poster_name = (user.display_name or user.username) if user else "A friend"
+        preview = "marked a spoiler — open to reveal" if is_spoiler else comment.body[:100]
         notify(
-            [it.user_id for it in eligible],
-            f"{poster_name} \u00b7 {book_title} ch {chapter}",
-            comment.body[:100],
+            [it.user_id for it in club],
+            f"{poster_name} · {book_title}",
+            preview,
             category="discussions",
         )
+
     return jsonify({
         "id": comment.id,
         "user": _user_summary(user),
         "chapter": comment.chapter,
         "body": comment.body,
+        "is_spoiler": bool(comment.is_spoiler),
+        "reactions": [],
         "created_at": comment.created_at.isoformat(),
         "mine": True,
-        "my_progress": new_progress,
     }), 201
+
+
+@discussion_bp.route("/comment/<int:comment_id>/react", methods=["POST"])
+@jwt_required()
+def toggle_reaction(comment_id):
+    """Add or remove one emoji reaction on a comment (long-press to react).
+
+    Toggling: reacting with an emoji you've already left removes it. You can
+    only react to comments you can see — your own or a friend's.
+    """
+    me_id = int(get_jwt_identity())
+    data = request.get_json(silent=True) or {}
+    emoji = (data.get("emoji") or "").strip()
+    if not emoji:
+        return jsonify({"message": "emoji is required"}), 400
+    if len(emoji) > MAX_EMOJI_LEN:
+        return jsonify({"message": "emoji is too long"}), 400
+
+    comment = DiscussionComment.query.get(comment_id)
+    if not comment:
+        return jsonify({"message": "Comment not found"}), 404
+
+    visible_ids = _friend_ids(me_id) | {me_id}
+    if comment.user_id not in visible_ids:
+        return jsonify({"message": "Comment not found"}), 404
+
+    existing = DiscussionReaction.query.filter_by(
+        comment_id=comment_id, user_id=me_id, emoji=emoji
+    ).first()
+    if existing:
+        db.session.delete(existing)
+    else:
+        db.session.add(DiscussionReaction(
+            comment_id=comment_id, user_id=me_id, emoji=emoji
+        ))
+    db.session.commit()
+
+    # Return the fresh tally for just this comment, for the caller's view.
+    tally = _reactions_for([comment_id], visible_ids, me_id).get(comment_id, [])
+    return jsonify({"comment_id": comment_id, "reactions": tally}), 200
 
 
 @discussion_bp.route("/comment/<int:comment_id>", methods=["DELETE"])
@@ -232,6 +312,9 @@ def delete_comment(comment_id):
     comment = DiscussionComment.query.get(comment_id)
     if not comment or comment.user_id != me_id:
         return jsonify({"message": "Comment not found"}), 404
+    # Clear reactions explicitly — don't rely on the DB cascade being armed
+    # (SQLite only enforces ondelete when PRAGMA foreign_keys is on).
+    DiscussionReaction.query.filter_by(comment_id=comment_id).delete()
     db.session.delete(comment)
     db.session.commit()
     return jsonify({"message": "Comment deleted"}), 200
