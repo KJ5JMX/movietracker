@@ -111,6 +111,50 @@ def get_song(song_id):
     return jsonify(_itunes_song_to_dict(rows[0])), 200
 
 
+@songs_bp.route("/<song_id>/album", methods=["GET"])
+@jwt_required()
+def get_song_album(song_id):
+    """The album's tracklist for a song (iTunes). Two lookups: the song, to find
+    its collection (album) id, then the collection's tracks. Empty (never an
+    error) on any miss so the Album tab degrades quietly."""
+    empty = {"album": None, "tracks": []}
+    try:
+        song = requests.get(
+            "https://itunes.apple.com/lookup",
+            params={"id": song_id},
+            timeout=10,
+        ).json()
+    except (requests.RequestException, ValueError):
+        return jsonify(empty), 200
+    rows = song.get("results") or []
+    if not rows:
+        return jsonify(empty), 200
+    collection_id = rows[0].get("collectionId")
+    album_name = rows[0].get("collectionName")
+    if not collection_id:
+        return jsonify({"album": album_name, "tracks": []}), 200
+    try:
+        data = requests.get(
+            "https://itunes.apple.com/lookup",
+            params={"id": collection_id, "entity": "song"},
+            timeout=10,
+        ).json()
+    except (requests.RequestException, ValueError):
+        return jsonify({"album": album_name, "tracks": []}), 200
+    tracks = []
+    for r in data.get("results") or []:
+        if r.get("wrapperType") != "track" or r.get("kind") != "song":
+            continue
+        tracks.append({
+            "track_id": str(r.get("trackId")) if r.get("trackId") else None,
+            "track_number": r.get("trackNumber"),
+            "title": r.get("trackName"),
+            "duration_ms": r.get("trackTimeMillis"),
+        })
+    tracks.sort(key=lambda t: (t.get("track_number") or 0))
+    return jsonify({"album": album_name, "tracks": tracks}), 200
+
+
 # ---------------------------------------------------------------------------
 # Books (Open Library)
 # ---------------------------------------------------------------------------
