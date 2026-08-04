@@ -195,6 +195,29 @@ def _ol_doc_to_dict(doc):
     }
 
 
+def _ol_book_pages(work_id):
+    """Median page count for a work, from its editions (Open Library). The work
+    record has no page count — pages live on editions — so we sample a batch and
+    take the median. None on any miss."""
+    try:
+        r = requests.get(
+            f"https://openlibrary.org/works/{work_id}/editions.json",
+            params={"limit": 20},
+            timeout=8,
+        ).json()
+    except (requests.RequestException, ValueError):
+        return None
+    pages = []
+    for e in (r or {}).get("entries", []) or []:
+        n = e.get("number_of_pages")
+        if isinstance(n, int) and n > 0:
+            pages.append(n)
+    if not pages:
+        return None
+    pages.sort()
+    return pages[len(pages) // 2]  # median-ish, avoids odd outlier editions
+
+
 def _ol_pick_genre(subjects):
     if not subjects:
         return None
@@ -278,14 +301,22 @@ def get_book(work_id):
     if isinstance(desc, dict):
         desc = desc.get("value")
 
+    # first_publish_date is present on many works, in mixed formats. Pull a year.
+    year = None
+    fpd = data.get("first_publish_date")
+    if isinstance(fpd, str):
+        m = re.search(r"\d{4}", fpd)
+        year = m.group(0) if m else None
+
     return jsonify({
         "imdb_id": work_id,
         "title": data.get("title"),
-        "year": None,  # works endpoint doesn't reliably give a first-publish year
+        "year": year,
         "movie_type": None,
         "media_type": "book",
         "poster": _ol_cover_url(cover_id, size="M"),
         "author": ", ".join(author_names) if author_names else None,
         "plot": desc,
         "genre": _ol_pick_genre(data.get("subjects")),
+        "page_count": _ol_book_pages(work_id),
     }), 200
