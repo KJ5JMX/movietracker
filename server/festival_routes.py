@@ -268,7 +268,7 @@ def complete_movie_of_week():
     # watch earned, including any achievement tiers it happened to unlock.
     from models import User
     user = User.query.get(user_id)
-    points_before = user.points or 0
+    mow_points = MOW_RATING_POINTS if first_completion else 0
     if first_completion:
         award_points(user_id, MOW_RATING_POINTS)
     newly = sync_and_notify(user_id) or []
@@ -276,7 +276,11 @@ def complete_movie_of_week():
 
     return jsonify({
         "movie_of_week": _mow_to_dict(mow, completion),
-        "points_awarded": points_after - points_before,
+        # ONLY the Movie of the Week reward. Achievement tiers unlocked by this
+        # watch are reported separately in achievements_unlocked so the app can
+        # surface them in their own "New Achievement!" popup instead of lumping
+        # their points into this number.
+        "points_awarded": mow_points,
         "total_points": points_after,
         "achievements_unlocked": newly,
     }), 200

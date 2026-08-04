@@ -68,7 +68,7 @@ LADDERS = [
                         (24, "Headliner"), (28, "Main Event"), (32, "Champion")),
     },
     {
-        "key": "cued_in", "name": "Cued In", "motif": "clapper",
+        "key": "cued_in", "name": "Movie Week", "motif": "clapper",
         "metric": "movie_of_week", "blocked": False,
         "tiers": _tiers((1, "Tuned In"), (4, "Subscriber"), (8, "Loyal"),
                         (16, "Devotee"), (32, "Ride or Die"),
