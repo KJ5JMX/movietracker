@@ -472,6 +472,62 @@ def _fetch_tmdb_financials(imdb_id):
     }
 
 
+def _fetch_tmdb_tv(imdb_id):
+    """Backdrop + per-season breakdown from TMDB for a series, by IMDb ID.
+
+    OMDb only gives totalSeasons; TMDB adds a backdrop, the total episode count,
+    and a season list (number, name, episode_count, air_date, overview, poster)
+    so the app can build a real Seasons tab. Same empty-on-miss contract as the
+    movie fetch. Specials (season_number 0) are kept; the client can hide them.
+    """
+    empty = {"backdrop": None, "number_of_episodes": None, "seasons": []}
+    if not Config.TMDB_API_KEY:
+        return empty
+    try:
+        find = requests.get(
+            f"{Config.TMDB_BASE_URL}/find/{imdb_id}",
+            params={"api_key": Config.TMDB_API_KEY, "external_source": "imdb_id"},
+            timeout=10,
+        ).json()
+    except (requests.RequestException, ValueError):
+        return empty
+    results = find.get("tv_results") if isinstance(find, dict) else None
+    if not results:
+        return empty
+    tv_id = results[0].get("id")
+    if not tv_id:
+        return empty
+    try:
+        d = requests.get(
+            f"{Config.TMDB_BASE_URL}/tv/{tv_id}",
+            params={"api_key": Config.TMDB_API_KEY},
+            timeout=10,
+        ).json()
+    except (requests.RequestException, ValueError):
+        return empty
+    if not isinstance(d, dict):
+        return empty
+    backdrop = d.get("backdrop_path")
+    seasons = []
+    for s in d.get("seasons") or []:
+        if not isinstance(s, dict):
+            continue
+        poster = s.get("poster_path")
+        seasons.append({
+            "season_number": s.get("season_number"),
+            "name": s.get("name"),
+            "episode_count": s.get("episode_count"),
+            "air_date": s.get("air_date") or None,
+            "overview": s.get("overview") or None,
+            "poster": f"https://image.tmdb.org/t/p/w185{poster}" if poster else None,
+        })
+    return {
+        "backdrop": f"https://image.tmdb.org/t/p/w780{backdrop}" if backdrop else None,
+        "number_of_episodes": d.get("number_of_episodes"),
+        "seasons": seasons,
+    }
+
+
 @movie_bp.route("/<imdb_id>", methods=["GET"])
 @jwt_required()
 def get_movie(imdb_id):
@@ -504,12 +560,30 @@ def get_movie(imdb_id):
         runtime_minutes = int(digits) if digits else None
 
     omdb_type = data.get("Type")
-    # Box-office financials only make sense for films; series get null fields.
-    financials = (
-        _fetch_tmdb_financials(imdb_id)
-        if omdb_type == "movie"
-        else {"budget": None, "revenue": None, "tmdb_id": None, "backdrop": None}
-    )
+    # Movies get box-office financials + backdrop; series get a backdrop + the
+    # season breakdown; anything else gets null fields.
+    tv_extra = {"number_of_episodes": None, "seasons": []}
+    if omdb_type == "movie":
+        financials = _fetch_tmdb_financials(imdb_id)
+    elif omdb_type == "series":
+        tv = _fetch_tmdb_tv(imdb_id)
+        financials = {
+            "budget": None,
+            "revenue": None,
+            "tmdb_id": None,
+            "backdrop": tv["backdrop"],
+        }
+        tv_extra = {
+            "number_of_episodes": tv["number_of_episodes"],
+            "seasons": tv["seasons"],
+        }
+    else:
+        financials = {
+            "budget": None,
+            "revenue": None,
+            "tmdb_id": None,
+            "backdrop": None,
+        }
     return jsonify({
         "imdb_id": data.get("imdbID"),
         "title": data.get("Title"),
@@ -541,6 +615,9 @@ def get_movie(imdb_id):
         "revenue": financials["revenue"],
         "tmdb_id": financials["tmdb_id"],
         "backdrop": financials["backdrop"],
+        # Series only (null/empty for movies): TMDB episode count + season list.
+        "number_of_episodes": tv_extra["number_of_episodes"],
+        "seasons": tv_extra["seasons"],
     }), 200
 
 
