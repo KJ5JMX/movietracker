@@ -702,6 +702,57 @@ def get_friend_ratings(imdb_id):
     }), 200
 
 
+@movie_bp.route("/<imdb_id>/season/<int:season_number>", methods=["GET"])
+@jwt_required()
+def get_tv_season(imdb_id, season_number):
+    """Episode list for one season of a series (TMDB), for the expandable
+    Seasons tab. Lazy-loaded when a season is opened. Returns
+    {"episodes": [{episode_number, name, air_date, overview, runtime, still}]}.
+    Empty (never an error) on any miss so the UI degrades quietly.
+    """
+    empty = {"episodes": []}
+    if not Config.TMDB_API_KEY:
+        return jsonify(empty), 200
+    try:
+        find = requests.get(
+            f"{Config.TMDB_BASE_URL}/find/{imdb_id}",
+            params={"api_key": Config.TMDB_API_KEY, "external_source": "imdb_id"},
+            timeout=10,
+        ).json()
+    except (requests.RequestException, ValueError):
+        return jsonify(empty), 200
+    results = find.get("tv_results") if isinstance(find, dict) else None
+    if not results:
+        return jsonify(empty), 200
+    tv_id = results[0].get("id")
+    if not tv_id:
+        return jsonify(empty), 200
+    try:
+        d = requests.get(
+            f"{Config.TMDB_BASE_URL}/tv/{tv_id}/season/{season_number}",
+            params={"api_key": Config.TMDB_API_KEY},
+            timeout=10,
+        ).json()
+    except (requests.RequestException, ValueError):
+        return jsonify(empty), 200
+    if not isinstance(d, dict):
+        return jsonify(empty), 200
+    episodes = []
+    for e in d.get("episodes") or []:
+        if not isinstance(e, dict):
+            continue
+        still = e.get("still_path")
+        episodes.append({
+            "episode_number": e.get("episode_number"),
+            "name": e.get("name"),
+            "air_date": e.get("air_date") or None,
+            "overview": e.get("overview") or None,
+            "runtime": e.get("runtime"),
+            "still": f"https://image.tmdb.org/t/p/w300{still}" if still else None,
+        })
+    return jsonify({"episodes": episodes}), 200
+
+
 def _clean_source(source):
     """Normalize one Watchmode source row to what the frontend cares about."""
     return {

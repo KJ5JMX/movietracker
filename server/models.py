@@ -210,6 +210,8 @@ class WatchlistItem(db.Model):
     # Runtime in minutes (parsed from OMDb's "Runtime" e.g. "148 min"). Nullable for back-compat.
     runtime_minutes = db.Column(db.Integer, nullable=True)
     seasons_watched = db.Column(db.String)  # JSON-encoded list of season numbers, TV only
+    # JSON-encoded {season_number: [episode_numbers]} for per-episode watched (TV)
+    episodes_watched = db.Column(db.String)
     # Reading progress for books (chapter number). Drives the spoiler gate on
     # friend discussions: you only see comments tagged <= your progress.
     chapter_progress = db.Column(db.Integer, nullable=True)

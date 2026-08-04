@@ -98,6 +98,40 @@ def _serialize_seasons(value):
     return json.dumps(cleaned)
 
 
+def _parse_episodes(raw):
+    """episodes_watched is stored as JSON {season: [episode_numbers]}; return a
+    dict {season_str: [int_episodes]} (or {}). Keys are season numbers as
+    strings (JSON object keys), values are sorted, de-duped episode numbers."""
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    out = {}
+    for k, v in value.items():
+        if not str(k).isdigit() or not isinstance(v, list):
+            continue
+        eps = sorted({int(e) for e in v if str(e).isdigit()})
+        out[str(int(k))] = eps
+    return out
+
+
+def _serialize_episodes(value):
+    """Accept {season: [episode_numbers]} and return a normalized JSON string."""
+    if not isinstance(value, dict):
+        return None
+    cleaned = {}
+    for k, v in value.items():
+        if not str(k).isdigit() or not isinstance(v, list):
+            continue
+        eps = sorted({int(e) for e in v if str(e).isdigit()})
+        cleaned[str(int(k))] = eps
+    return json.dumps(cleaned)
+
+
 def item_to_dict(item, recommenders=None):
     recommended_by = None
     if item.recommended_by_user_id:
@@ -130,6 +164,7 @@ def item_to_dict(item, recommenders=None):
         "coming_soon": coming_soon,
         "runtime_minutes": item.runtime_minutes,
         "seasons_watched": _parse_seasons(item.seasons_watched),
+        "episodes_watched": _parse_episodes(item.episodes_watched),
         "chapter_progress": item.chapter_progress,
         "watch_status": item.watch_status,
         "rating": item.rating,
@@ -248,6 +283,8 @@ def update_watchlist_item(item_id):
     item.notes = data.get("notes", item.notes)
     if "seasons_watched" in data:
         item.seasons_watched = _serialize_seasons(data.get("seasons_watched"))
+    if "episodes_watched" in data:
+        item.episodes_watched = _serialize_episodes(data.get("episodes_watched"))
     if "chapter_progress" in data:
         raw = data.get("chapter_progress")
         if raw is None:
