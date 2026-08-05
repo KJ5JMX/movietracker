@@ -201,6 +201,9 @@ class WatchlistItem(db.Model):
     )
     plot = db.Column(db.String)
     poster = db.Column(db.String)
+    # Wide TMDB backdrop for the detail hero, resolved when the item is added so
+    # the hero can render instantly instead of waiting on a per-open lookup.
+    backdrop = db.Column(db.String)
     genre = db.Column(db.String)
     director = db.Column(db.String)
     actors = db.Column(db.String)
@@ -260,6 +263,13 @@ class Group(db.Model):
     )
     name = db.Column(db.String, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    # Cached franchise backdrop for the collection hero. When the members share
+    # a TMDB collection (e.g. a Harry Potter group), that collection's curated
+    # art is stored here. backdrop_key is a hash of the member set so the cache
+    # re-resolves when membership changes; backdrop_url may be None (a non-
+    # franchise group has no collection art, and we cache that "no" too).
+    backdrop_url = db.Column(db.String, nullable=True)
+    backdrop_key = db.Column(db.String, nullable=True)
 
     # Deleting a group removes its membership rows but never the items.
     members = db.relationship(

@@ -65,6 +65,21 @@ watchlist_bp = Blueprint("watchlist", __name__, url_prefix="/watchlist")
 ALLOWED_MEDIA_TYPES = {"movie", "tv", "song", "book"}
 
 
+def _resolve_item_backdrop(imdb_id, media_type):
+    """The TMDB backdrop for a movie/TV item, resolved once at add time so the
+    detail hero has the URL immediately (no per-open lookup). Lazy import to
+    avoid an import cycle; None for songs/books or on any TMDB miss."""
+    if not imdb_id or media_type not in ("movie", "tv"):
+        return None
+    try:
+        from movie_routes import _fetch_tmdb_financials, _fetch_tmdb_tv
+        if media_type == "movie":
+            return _fetch_tmdb_financials(imdb_id).get("backdrop")
+        return _fetch_tmdb_tv(imdb_id).get("backdrop")
+    except Exception:
+        return None
+
+
 def _user_summary(user):
     if not user:
         return None
@@ -154,6 +169,7 @@ def item_to_dict(item, recommenders=None):
         "media_type": item.media_type,
         "plot": item.plot,
         "poster": item.poster,
+        "backdrop": item.backdrop,
         "genre": item.genre,
         "director": item.director,
         "actors": item.actors,
@@ -242,6 +258,9 @@ def add_to_watchlist():
         media_type=media_type,
         plot=data.get("plot"),
         poster=data.get("poster"),
+        # Resolve the wide backdrop now so the detail hero renders instantly
+        # later. Falls back to the client-sent value (e.g. a re-add) if present.
+        backdrop=data.get("backdrop") or _resolve_item_backdrop(imdb_id, media_type),
         genre=data.get("genre"),
         director=data.get("director"),
         actors=data.get("actors"),
@@ -303,6 +322,7 @@ def update_watchlist_item(item_id):
                 pass  # ignore garbage; keep existing progress
     # Metadata fields (used for auto-backfill from DetailScreen)
     item.plot = data.get("plot", item.plot)
+    item.backdrop = data.get("backdrop", item.backdrop)
     item.genre = data.get("genre", item.genre)
     item.director = data.get("director", item.director)
     item.actors = data.get("actors", item.actors)

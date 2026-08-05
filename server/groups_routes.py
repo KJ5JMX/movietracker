@@ -6,8 +6,14 @@ in several groups. Grouped items are hidden from the flat list because the Lists
 screen fetches /watchlist/?exclude_grouped=1.
 """
 
+import hashlib
+from collections import Counter
+
+import requests
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
+
+from config import Config
 from models import db, Group, GroupMember, WatchlistItem
 from watchlist_routes import item_to_dict
 
@@ -15,6 +21,81 @@ groups_bp = Blueprint("groups", __name__, url_prefix="/groups")
 
 # How many member posters to surface for the fan effect on the list card.
 FAN_POSTER_LIMIT = 5
+
+# How many members to sample when looking for a shared TMDB franchise.
+BACKDROP_SAMPLE = 5
+
+
+def _tmdb_collection_backdrop(imdb_id):
+    """If this movie belongs to a TMDB collection (a franchise like Harry
+    Potter), return {"id", "backdrop"} for that collection's curated art. TV has
+    no collections in TMDB, so this is movie-only. None on any miss."""
+    if not Config.TMDB_API_KEY:
+        return None
+    try:
+        find = requests.get(
+            f"{Config.TMDB_BASE_URL}/find/{imdb_id}",
+            params={"api_key": Config.TMDB_API_KEY, "external_source": "imdb_id"},
+            timeout=8,
+        ).json()
+    except (requests.RequestException, ValueError):
+        return None
+    results = find.get("movie_results") if isinstance(find, dict) else None
+    if not results:
+        return None
+    tmdb_id = results[0].get("id")
+    if not tmdb_id:
+        return None
+    try:
+        details = requests.get(
+            f"{Config.TMDB_BASE_URL}/movie/{tmdb_id}",
+            params={"api_key": Config.TMDB_API_KEY},
+            timeout=8,
+        ).json()
+    except (requests.RequestException, ValueError):
+        return None
+    coll = details.get("belongs_to_collection") if isinstance(details, dict) else None
+    if not coll or not coll.get("id"):
+        return None
+    backdrop = coll.get("backdrop_path")
+    return {
+        "id": coll["id"],
+        # Wide, high-res franchise still for a full-width hero.
+        "backdrop": f"https://image.tmdb.org/t/p/w1280{backdrop}" if backdrop else None,
+    }
+
+
+def _resolve_collection_backdrop(items):
+    """The collection's franchise backdrop, if its movies share a real TMDB
+    collection. Samples up to BACKDROP_SAMPLE movie members and takes the most
+    common collection; requires 2+ agreeing (or a lone movie that belongs to
+    one) so a mixed 'movies to watch' group doesn't borrow one film's franchise.
+    None when there's no shared franchise (the client falls back to a montage)."""
+    movie_items = [
+        it for it in items
+        if (it.media_type in (None, "movie")) and it.imdb_id
+    ]
+    votes = Counter()
+    backdrops = {}
+    for it in movie_items[:BACKDROP_SAMPLE]:
+        res = _tmdb_collection_backdrop(it.imdb_id)
+        if res:
+            votes[res["id"]] += 1
+            if res["backdrop"]:
+                backdrops[res["id"]] = res["backdrop"]
+    if not votes:
+        return None
+    top_id, count = votes.most_common(1)[0]
+    if count >= 2 or len(movie_items) == 1:
+        return backdrops.get(top_id)
+    return None
+
+
+def _member_backdrop_key(items):
+    """Stable hash of the member set, so a cached backdrop invalidates the
+    moment the collection's contents change."""
+    ids = sorted(str(it.imdb_id or it.id) for it in items)
+    return hashlib.md5("|".join(ids).encode("utf-8")).hexdigest()
 
 
 def _owned_items(user_id, item_ids):
@@ -148,6 +229,41 @@ def get_group(group_id):
     if not group:
         return jsonify({"message": "Group not found"}), 404
     return jsonify(group_detail(group)), 200
+
+
+@groups_bp.route("/<int:group_id>/backdrop", methods=["GET"])
+@jwt_required()
+def group_backdrop(group_id):
+    """The collection's franchise backdrop URL, or null. Resolved lazily off
+    TMDB and cached on the group (keyed by member set) so repeat loads are free
+    and it re-resolves only when the collection's contents change."""
+    user_id = int(get_jwt_identity())
+    group = Group.query.filter_by(id=group_id, user_id=user_id).first()
+    if not group:
+        return jsonify({"message": "Group not found"}), 404
+
+    members = _members_ordered(group.id)
+    item_ids = [m.watchlist_item_id for m in members]
+    items = []
+    if item_ids:
+        by_id = {
+            it.id: it
+            for it in WatchlistItem.query.filter(
+                WatchlistItem.id.in_(item_ids)
+            ).all()
+        }
+        items = [by_id[i] for i in item_ids if i in by_id]
+
+    key = _member_backdrop_key(items)
+    if group.backdrop_key == key:
+        # Cache hit (including a cached "no franchise" -> null).
+        return jsonify({"backdrop": group.backdrop_url}), 200
+
+    backdrop = _resolve_collection_backdrop(items)
+    group.backdrop_url = backdrop
+    group.backdrop_key = key
+    db.session.commit()
+    return jsonify({"backdrop": backdrop}), 200
 
 
 @groups_bp.route("/<int:group_id>", methods=["PATCH"])
