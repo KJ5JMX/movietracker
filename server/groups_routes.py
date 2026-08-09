@@ -15,6 +15,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from config import Config
 from models import db, Group, GroupMember, WatchlistItem
+from models import User
 from watchlist_routes import item_to_dict
 
 groups_bp = Blueprint("groups", __name__, url_prefix="/groups")
@@ -197,6 +198,16 @@ def list_groups():
 def create_group():
     user_id = int(get_jwt_identity())
     data = request.get_json(silent=True) or {}
+
+    # Free tier caps collections at 3; Pro is unlimited.
+    _me = User.query.get(user_id)
+    if _me and not _me.is_pro and Group.query.filter_by(user_id=user_id).count() >= 3:
+        return jsonify({
+            "message": "Free accounts keep 3 collections. Delete one, or go Pro for unlimited.",
+            "code": "limit_reached",
+            "limit": "collections",
+            "cap": 3,
+        }), 402
 
     item_ids = data.get("item_ids") or []
     if not isinstance(item_ids, list) or not item_ids:

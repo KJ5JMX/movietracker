@@ -65,10 +65,28 @@ class User(db.Model):
     # Equipped avatar key from the avatar shop (bought with points). Null shows
     # the default initial-in-a-circle.
     avatar_selected = db.Column(db.String, nullable=True)
+    # Profile banner. Null -> the default color gradient. Otherwise a backdrop
+    # image URL the user picked (from a title on their shelf) to sit behind
+    # their avatar on the public/friend profile, DetailScreen-style.
+    profile_banner = db.Column(db.String, nullable=True)
     # Account creation time, shown as "member since" on the profile. Nullable so
     # pre-existing rows (no recorded signup date) simply hide the date; new
     # signups get an accurate timestamp.
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=True)
+    # Paid "plot coins" — the premium currency for the revolving Pro avatar shop.
+    # Kept fully separate from `points` (earned, spent on free avatars + flair).
+    # Coins only come from cash (IAP), the monthly Pro grant, and the one-time
+    # signup bonus. Balance lives here; every movement is logged in CoinLedger.
+    coins = db.Column(db.Integer, default=0, server_default="0", nullable=False)
+    # One-time 3-coin bonus on first Pro subscribe; this flag keeps it idempotent.
+    coin_signup_bonus_granted = db.Column(
+        db.Boolean, default=False, server_default="0", nullable=False
+    )
+    # Last grant of the monthly Pro coin (1/mo), to enforce one per month.
+    coin_last_monthly_grant = db.Column(db.DateTime, nullable=True)
+    # Last time this Pro user gifted their monthly coin to a free friend
+    # (self-limiting: one gift per Pro user per month).
+    coin_gift_last_grant = db.Column(db.DateTime, nullable=True)
 
     @property
     def is_pro(self):
@@ -761,11 +779,68 @@ class UserAvatar(db.Model):
         index=True,
     )
     avatar_key = db.Column(db.String, nullable=False)
+    # 'free' (unlocked with points) or 'pro' (bought with coins from the revolving
+    # shop). Lets the app render pro character avatars differently and keeps the
+    # two economies from colliding on a shared key space.
+    pool = db.Column(db.String, default="free", server_default="free", nullable=False)
     unlocked_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     __table_args__ = (
         db.UniqueConstraint("user_id", "avatar_key", name="uq_user_avatar"),
     )
+
+
+class ProAvatar(db.Model):
+    """A premium 'character' avatar in the revolving Pro shop. Uploaded via the
+    admin dashboard and bought with paid plot coins (never points). Ownership
+    lives in UserAvatar (pool='pro'); User.avatar_selected equips it, exactly
+    like a free avatar. The catalog row stays forever so owners keep their art
+    even after the item rotates off the shelf."""
+
+    __tablename__ = "pro_avatars"
+
+    id = db.Column(db.Integer, primary_key=True)
+    key = db.Column(db.String, unique=True, nullable=False)  # slug, e.g. "neon-rider"
+    name = db.Column(db.String, nullable=False)
+    # Base64-encoded PNG bytes, stored in the DB (no file-hosting infra needed,
+    # survives container rebuilds, covered by the nightly DB backup). Served to
+    # the app via GET /pro-avatars/<key>/full.png and /head.png. Full character
+    # (showcase) + square headshot crop. See the Pro Avatar Art Spec for sizes.
+    image_full_data = db.Column(db.Text, nullable=False)
+    image_head_data = db.Column(db.Text, nullable=False)
+    coin_price = db.Column(db.Integer, nullable=False)
+    artist_credit = db.Column(db.String, nullable=True)
+    # Current shelf position 1..5 while on the revolving shop; NULL once rotated
+    # off (owners keep it — it just leaves the store).
+    slot = db.Column(db.Integer, nullable=True)
+    is_active = db.Column(
+        db.Boolean, default=True, server_default="1", nullable=False
+    )
+    sort_order = db.Column(db.Integer, default=0, server_default="0", nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+
+class CoinLedger(db.Model):
+    """Append-only audit trail of every plot-coin movement. User.coins is the
+    live balance; this explains how it got there. `reason` is one of:
+    purchase (IAP), monthly_grant, signup_bonus, spend, gift_sent, gift_received.
+    `ref` holds the relevant id (pro avatar key, Apple transaction id, or the
+    other user's id for gifts)."""
+
+    __tablename__ = "coin_ledger"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", name="fk_coin_ledger_user"),
+        nullable=False,
+        index=True,
+    )
+    delta = db.Column(db.Integer, nullable=False)
+    reason = db.Column(db.String, nullable=False)
+    ref = db.Column(db.String, nullable=True)
+    balance_after = db.Column(db.Integer, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
 
 class ActivityLike(db.Model):

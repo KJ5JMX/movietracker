@@ -148,6 +148,7 @@ def user_to_dict(user):
         "notification_prefs": user.notification_prefs,
         "notification_settings": _notif_settings(user),
         "privacy_mode": user.privacy_mode,
+        "profile_banner": user.profile_banner,
         "dark_mode": bool(user.dark_mode),
         "pro_status": user.pro_status,
         "is_pro": user.is_pro,
@@ -316,6 +317,12 @@ def update_me():
         mode = data["privacy_mode"]
         if mode not in ("public", "friends", "private"):
             return jsonify({"message": "Invalid privacy_mode"}), 400
+        # Going public is the Pro hook — only Pro users can be publicly listed.
+        if mode == "public" and not user.is_pro:
+            return jsonify({
+                "message": "Public sharing is a Pro feature",
+                "code": "pro_required",
+            }), 402
         user.privacy_mode = mode
 
     if "dark_mode" in data:
@@ -342,6 +349,15 @@ def update_me():
 
     if "onboarded" in data:
         user.onboarded = bool(data["onboarded"])
+
+    if "profile_banner" in data:
+        banner = data["profile_banner"]
+        if banner is None:
+            user.profile_banner = None
+        elif isinstance(banner, str) and banner.strip():
+            user.profile_banner = banner.strip()
+        else:
+            return jsonify({"message": "Invalid profile_banner"}), 400
 
     db.session.commit()
     return jsonify(user_to_dict(user)), 200

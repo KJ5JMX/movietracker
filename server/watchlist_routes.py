@@ -177,6 +177,7 @@ def item_to_dict(item, recommenders=None):
         "rated": item.rated,
         "released": item.released,
         "release_date_iso": release_date.isoformat() if release_date else None,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
         "coming_soon": coming_soon,
         "runtime_minutes": item.runtime_minutes,
         "seasons_watched": _parse_seasons(item.seasons_watched),
@@ -249,6 +250,16 @@ def add_to_watchlist():
     ).first()
     if existing:
         return jsonify({"message": "Item already in your list"}), 400
+
+    # Free tier caps the list at 250 titles (all media combined); Pro is unlimited.
+    _me = User.query.get(user_id)
+    if _me and not _me.is_pro and WatchlistItem.query.filter_by(user_id=user_id).count() >= 250:
+        return jsonify({
+            "message": "You've hit the 250-title free limit. Remove some, or go Pro for unlimited.",
+            "code": "limit_reached",
+            "limit": "titles",
+            "cap": 250,
+        }), 402
 
     new_item = WatchlistItem(
         title=title,

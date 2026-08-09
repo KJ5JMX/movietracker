@@ -272,14 +272,7 @@ def get_feed():
     if not me:
         return jsonify({"message": "User not found"}), 404
 
-    # Pro-gated. Free users get a clean 402 so the frontend can swap in
-    # the Upgrade pitch instead of an error state.
-    if not me.is_pro:
-        return jsonify({
-            "message": "Discovery feed is a Pro feature",
-            "code": "pro_required",
-        }), 402
-
+    # Discovery (friend feed) is free for everyone now; public discovery is the separate Pro feature.
     friend_ids = _friend_ids(me_id)
     owned = _my_imdb_ids(me_id)
     user_genres = _parse_genres(me.genres)
@@ -354,3 +347,66 @@ def unlike_item(item_id):
         "like_count": _like_count(item_id),
         "liked_by_me": False,
     }), 200
+
+
+@feed_bp.route("/public", methods=["GET"])
+@jwt_required()
+def public_discovery():
+    """The Pro hook: browse other Pro users who opted into public sharing, with
+    a peek at their recent picks. Excludes yourself and people you're already
+    friends with. Each entry carries a friend_code so the app can send a request
+    through the normal /friends/request flow. Pro-gated."""
+    me_id = int(get_jwt_identity())
+    me = User.query.get(me_id)
+    if not me:
+        return jsonify({"message": "User not found"}), 404
+    if not me.is_pro:
+        return jsonify({
+            "message": "Public discovery is a Pro feature",
+            "code": "pro_required",
+        }), 402
+
+    friend_ids = set(_friend_ids(me_id))
+    users = (
+        User.query
+        .filter(
+            User.privacy_mode == "public",
+            User.id != me_id,
+            User.pro_status.in_(("comp", "paid", "trial")),
+        )
+        .limit(60)
+        .all()
+    )
+
+    out = []
+    for u in users:
+        if u.id in friend_ids:
+            continue
+        recent = (
+            WatchlistItem.query
+            .filter_by(user_id=u.id)
+            .order_by(WatchlistItem.id.desc())
+            .limit(6)
+            .all()
+        )
+        out.append({
+            "user": {
+                "id": u.id,
+                "username": u.username,
+                "display_name": u.display_name,
+                "friend_code": u.friend_code,
+                "avatar_selected": u.avatar_selected,
+            },
+            "recent": [
+                {
+                    "imdb_id": i.imdb_id,
+                    "title": i.title,
+                    "poster": i.poster,
+                    "media_type": i.media_type,
+                    "rating": i.rating,
+                }
+                for i in recent
+            ],
+        })
+
+    return jsonify({"users": out}), 200

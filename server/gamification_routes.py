@@ -67,6 +67,7 @@ def _progress_dict(user_id):
     )
     return {
         "points": user.points or 0,
+        "coins": user.coins or 0,
         "show_flair": bool(user.show_flair),
         "flair_selected": user.flair_selected,
         "flair_selected_name": selected_name,

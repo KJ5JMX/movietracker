@@ -41,6 +41,7 @@ from models import (
 from movie_routes import _omdb_search_forgiving
 from streaming_routes import ALLOWED_PLATFORMS
 from achievements import award_points, sync_and_notify
+from models import ProAvatar  # pro avatar shop
 
 # Points granted for the bounded, cheat-proof events (once each).
 MOW_RATING_POINTS = 2
@@ -817,3 +818,129 @@ def admin_notify_battle_result(battle_id):
 
 # The admin page HTML is defined in admin_page.py to keep this file focused.
 from admin_page import ADMIN_PAGE_HTML  # noqa: E402
+
+
+
+# ===========================================================================
+# Pro avatar shop (cosmetics) — upload + manage the revolving 5-slot pool
+# ===========================================================================
+
+def _strip_data_uri(value):
+    """Accept raw base64 or a 'data:image/png;base64,...' data URI."""
+    if not value:
+        return value
+    if value[:5] == "data:" and "," in value:
+        return value.split(",", 1)[1]
+    return value
+
+
+@admin_bp.route("/api/pro-avatars", methods=["GET"])
+@require_admin
+def admin_list_pro_avatars():
+    avatars = ProAvatar.query.order_by(
+        ProAvatar.slot.is_(None), ProAvatar.slot.asc(), ProAvatar.created_at.desc()
+    ).all()
+    return jsonify([
+        {
+            "key": a.key,
+            "name": a.name,
+            "coin_price": a.coin_price,
+            "artist_credit": a.artist_credit,
+            "slot": a.slot,
+            "is_active": a.is_active,
+            "has_full": bool(a.image_full_data),
+            "has_head": bool(a.image_head_data),
+        }
+        for a in avatars
+    ]), 200
+
+
+@admin_bp.route("/api/pro-avatars", methods=["POST"])
+@require_admin
+def admin_upsert_pro_avatar():
+    """Create or update a pro avatar by key. On create, name + coin_price + both
+    images are required (NOT NULL). On update, provided fields apply; omitted
+    ones are left as-is."""
+    data = request.get_json(silent=True) or {}
+    key = (data.get("key") or "").strip()
+    if not key:
+        return jsonify({"message": "key is required"}), 400
+
+    a = ProAvatar.query.filter_by(key=key).first()
+    creating = a is None
+    if creating:
+        a = ProAvatar(key=key)
+        db.session.add(a)
+
+    if "name" in data:
+        a.name = (data.get("name") or "").strip() or a.name
+    if "coin_price" in data:
+        try:
+            a.coin_price = int(data.get("coin_price"))
+        except (TypeError, ValueError):
+            return jsonify({"message": "coin_price must be a number"}), 400
+    if "artist_credit" in data:
+        a.artist_credit = (data.get("artist_credit") or "").strip() or None
+    if "slot" in data:
+        raw = data.get("slot")
+        if raw in (None, "", "none"):
+            a.slot = None
+        else:
+            try:
+                a.slot = int(raw)
+            except (TypeError, ValueError):
+                return jsonify({"message": "slot must be 1-5 or empty"}), 400
+    if "is_active" in data:
+        a.is_active = bool(data.get("is_active"))
+    if data.get("image_full_data"):
+        a.image_full_data = _strip_data_uri(data["image_full_data"])
+    if data.get("image_head_data"):
+        a.image_head_data = _strip_data_uri(data["image_head_data"])
+
+    if creating and (
+        not a.name or a.coin_price is None
+        or not a.image_full_data or not a.image_head_data
+    ):
+        db.session.rollback()
+        return jsonify({
+            "message": "A new avatar needs a name, coin price, and both images.",
+        }), 400
+
+    db.session.commit()
+    return jsonify({"key": a.key, "slot": a.slot, "ok": True}), 200
+
+
+@admin_bp.route("/api/pro-avatars/<key>/delete", methods=["POST"])
+@require_admin
+def admin_delete_pro_avatar(key):
+    """Delete an avatar. If anyone already bought it, we don't orphan their art
+    — we just pull it off the shelf (slot cleared, deactivated) and keep the
+    row so their equipped image still loads."""
+    from models import UserAvatar
+    a = ProAvatar.query.filter_by(key=key).first()
+    if not a:
+        return jsonify({"message": "Not found"}), 404
+    owned = UserAvatar.query.filter_by(avatar_key=key).count()
+    if owned:
+        a.slot = None
+        a.is_active = False
+        db.session.commit()
+        return jsonify({
+            "message": f"In use by {owned} owner(s); removed from the shop but kept.",
+        }), 200
+    db.session.delete(a)
+    db.session.commit()
+    return jsonify({"message": "Deleted"}), 200
+
+
+@admin_bp.route("/api/pro-avatars/notify", methods=["POST"])
+@require_admin
+def admin_notify_pro_drop():
+    """Ping every user that a fresh batch of pro avatars is live in the shop.
+    Fire this after uploading a new drop."""
+    notify(
+        _all_user_ids(), "New avatars in the shop",
+        "Fresh pro avatars just dropped. Grab yours with plot coins.",
+        category="festival", data={"type": "avatar_drop"},
+    )
+    return jsonify({"message": "Users notified of the new drop"}), 200

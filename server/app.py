@@ -31,6 +31,7 @@ from movie_routes import movie_bp
 from social_routes import social_bp
 from night_routes import night_bp
 from media_routes import songs_bp, books_bp
+from cosmetics_routes import cosmetics_bp
 from feed_routes import feed_bp
 from iap_routes import iap_bp
 from discussion_routes import discussion_bp
@@ -64,6 +65,7 @@ app.register_blueprint(festival_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(gam_bp)
 app.register_blueprint(groups_bp)
+app.register_blueprint(cosmetics_bp)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 db.init_app(app)

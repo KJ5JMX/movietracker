@@ -149,6 +149,36 @@ ADMIN_PAGE_HTML = r"""<!DOCTYPE html>
     <div class="msg" id="b-msg"></div>
   </div>
 
+  <!-- PRO AVATARS -->
+  <div class="card">
+    <h2>Pro Avatars</h2>
+    <div class="current" id="pa-shop">Loading shop...</div>
+    <label>Slot (the revolving 5-avatar shelf)</label>
+    <select id="pa-slot">
+      <option value="1">Slot 1</option>
+      <option value="2">Slot 2</option>
+      <option value="3">Slot 3</option>
+      <option value="4">Slot 4</option>
+      <option value="5">Slot 5</option>
+      <option value="">Off shelf (keep, not shown)</option>
+    </select>
+    <label>Key (unique id, lowercase-dashes, e.g. neon-rider)</label>
+    <input type="text" id="pa-key" placeholder="neon-rider" />
+    <label>Name</label>
+    <input type="text" id="pa-name" placeholder="Neon Rider" />
+    <label>Price (plot coins)</label>
+    <input type="number" id="pa-price" value="3" min="1" max="99" />
+    <label>Artist credit (optional)</label>
+    <input type="text" id="pa-artist" placeholder="@artist" />
+    <label>Full character PNG (transparent, ~1080x1440)</label>
+    <input type="file" id="pa-full" accept="image/png" />
+    <label>Headshot PNG (transparent, ~512x512)</label>
+    <input type="file" id="pa-head" accept="image/png" />
+    <div style="margin-top:12px"><button id="pa-save">Save avatar to slot</button></div>
+    <div style="margin-top:8px"><button class="ghost small" id="pa-notify">Notify users of new drop</button></div>
+    <div class="msg" id="pa-msg"></div>
+  </div>
+
   <!-- NUMBERS -->
   <div class="card">
     <h2>Numbers</h2>
@@ -602,6 +632,65 @@ loadStreamHealth();
 setInterval(loadStreamHealth, 120000);
 loadCurrentMotm();
 loadDashboard();
+
+function fileToDataUrl(input) {
+  return new Promise((resolve) => {
+    const f = input.files && input.files[0];
+    if (!f) { resolve(null); return; }
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(f);
+  });
+}
+async function loadProAvatars() {
+  let list;
+  try { list = await api("/pro-avatars"); }
+  catch (e) { setMsg("pa-msg", e.message, false); return; }
+  const bySlot = {};
+  list.forEach((a) => { if (a.slot) bySlot[a.slot] = a; });
+  let html = "";
+  for (let s = 1; s <= 5; s++) {
+    const a = bySlot[s];
+    if (a) {
+      html += "<div style='margin:4px 0'>Slot " + s + ": <b>" + a.name + "</b> (" + a.coin_price + " coins" + (a.artist_credit ? ", " + a.artist_credit : "") + ") <button class='ghost small' data-key='" + a.key + "' onclick='removeProAvatar(this.dataset.key)'>remove</button></div>";
+    } else {
+      html += "<div style='margin:4px 0;color:#999'>Slot " + s + ": empty</div>";
+    }
+  }
+  document.getElementById("pa-shop").innerHTML = html;
+}
+document.getElementById("pa-save").onclick = async () => {
+  const key = document.getElementById("pa-key").value.trim();
+  const name = document.getElementById("pa-name").value.trim();
+  const price = document.getElementById("pa-price").value;
+  const artist = document.getElementById("pa-artist").value.trim();
+  const slot = document.getElementById("pa-slot").value;
+  if (!key || !name) { setMsg("pa-msg", "Key and name are required.", false); return; }
+  setMsg("pa-msg", "Uploading...", true);
+  const full = await fileToDataUrl(document.getElementById("pa-full"));
+  const head = await fileToDataUrl(document.getElementById("pa-head"));
+  const body = { key: key, name: name, coin_price: price, artist_credit: artist, slot: slot };
+  if (full) { body.image_full_data = full; }
+  if (head) { body.image_head_data = head; }
+  try {
+    await api("/pro-avatars", { method: "POST", body: body });
+    setMsg("pa-msg", "Saved.", true);
+    loadProAvatars();
+  } catch (e) { setMsg("pa-msg", e.message, false); }
+};
+async function removeProAvatar(key) {
+  try { await api("/pro-avatars/" + key + "/delete", { method: "POST" }); loadProAvatars(); }
+  catch (e) { setMsg("pa-msg", e.message, false); }
+}
+document.getElementById("pa-notify").onclick = async () => {
+  setMsg("pa-msg", "Sending...", true);
+  try {
+    const r = await api("/pro-avatars/notify", { method: "POST" });
+    setMsg("pa-msg", r.message || "Users notified.", true);
+  } catch (e) { setMsg("pa-msg", e.message, false); }
+};
+loadProAvatars();
 </script>
 </body>
 </html>

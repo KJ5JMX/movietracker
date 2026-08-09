@@ -176,6 +176,59 @@ def existing_friendship(user_a_id, user_b_id):
     ).first()
 
 
+def friendship_status(me_id, other_id):
+    """'self' | 'friends' | 'incoming' | 'outgoing' | 'none'."""
+    if me_id == other_id:
+        return "self"
+    f = existing_friendship(me_id, other_id)
+    if not f:
+        return "none"
+    if f.status == "accepted":
+        return "friends"
+    if f.status == "pending":
+        # requester waits; addressee has an action to take
+        return "outgoing" if f.requester_id == me_id else "incoming"
+    return "none"
+
+
+def profile_summary(user, me_id):
+    """Header block for the public/friend profile screen: identity, cosmetics,
+    lifetime counts, and the viewer's relationship to this user."""
+    if not user:
+        return None
+    from achievements import FLAIR_BY_KEY
+    watched = WatchlistItem.query.filter_by(
+        user_id=user.id, watch_status="watched"
+    ).count()
+    rated = WatchlistItem.query.filter(
+        WatchlistItem.user_id == user.id,
+        WatchlistItem.rating.isnot(None),
+        WatchlistItem.rating > 0,
+    ).count()
+    flair_name = None
+    if user.show_flair and user.flair_selected:
+        flair_name = FLAIR_BY_KEY.get(user.flair_selected, {}).get("name")
+    f = None if me_id == user.id else existing_friendship(me_id, user.id)
+    return {
+        "friendship_id": f.id if f else None,
+        "id": user.id,
+        "username": user.username,
+        "display_name": user.display_name,
+        "friend_code": user.friend_code,
+        "avatar_selected": user.avatar_selected,
+        "is_pro": user.is_pro,
+        "privacy_mode": user.privacy_mode,
+        "points": user.points or 0,
+        "watched_count": watched,
+        "rated_count": rated,
+        "member_since": user.created_at.year if user.created_at else None,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "profile_banner": user.profile_banner,
+        "flair_name": flair_name,
+        "friendship_status": friendship_status(me_id, user.id),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Friends
 # ---------------------------------------------------------------------------
@@ -313,72 +366,83 @@ def remove_friend(friendship_id):
 @jwt_required()
 def friend_activity(user_id):
     me_id = int(get_jwt_identity())
+    me = User.query.get(me_id)
     friend = User.query.get(user_id)
     if not friend:
         return jsonify({"message": "User not found"}), 404
-    if not are_friends(me_id, user_id):
-        return jsonify({"message": "You're not friends with this user"}), 403
 
-    # Recs + reviews exchanged, both directions
-    recs_from_them = (
-        Recommendation.query
-        .filter_by(from_user_id=user_id, to_user_id=me_id)
-        .order_by(Recommendation.created_at.desc()).limit(50).all()
-    )
-    recs_to_them = (
-        Recommendation.query
-        .filter_by(from_user_id=me_id, to_user_id=user_id)
-        .order_by(Recommendation.created_at.desc()).limit(50).all()
-    )
-    reviews_from_them = (
-        ReviewShare.query
-        .filter_by(from_user_id=user_id, to_user_id=me_id)
-        .order_by(ReviewShare.created_at.desc()).limit(50).all()
-    )
-    reviews_to_them = (
-        ReviewShare.query
-        .filter_by(from_user_id=me_id, to_user_id=user_id)
-        .order_by(ReviewShare.created_at.desc()).limit(50).all()
-    )
+    is_self = me_id == user_id
+    friends = is_self or are_friends(me_id, user_id)
+    is_public = friend.privacy_mode == "public"
+    # Non-friends can view a profile only when it's public AND the viewer is Pro
+    # (public discovery is a Pro perk). Friends and self always get through.
+    if not friends and not (is_public and me and me.is_pro):
+        return jsonify({"message": "This profile is private"}), 403
 
-    # Movie nights where BOTH of us were participants
-    from models import MovieNightSession, MovieNightParticipant
-    my_sessions = {
-        p.session_id
-        for p in MovieNightParticipant.query.filter_by(user_id=me_id).all()
-    }
-    shared_parts = (
-        MovieNightParticipant.query
-        .filter(
-            MovieNightParticipant.user_id == user_id,
-            MovieNightParticipant.session_id.in_(my_sessions),
-        ).all()
-        if my_sessions else []
-    )
+    # Recs + reviews exchanged, and movie nights together. All of this is
+    # mutual content that only exists between friends; a public non-friend
+    # viewer sees just the header + shelf, so we skip these queries for them.
+    recs_from_them = recs_to_them = reviews_from_them = reviews_to_them = []
     nights = []
-    if shared_parts:
-        their_ratings = {p.session_id: p.rating for p in shared_parts}
-        my_parts = MovieNightParticipant.query.filter(
-            MovieNightParticipant.user_id == me_id,
-            MovieNightParticipant.session_id.in_(list(their_ratings.keys())),
-        ).all()
-        my_ratings = {p.session_id: p.rating for p in my_parts}
-        sessions = (
-            MovieNightSession.query
-            .filter(MovieNightSession.id.in_(list(their_ratings.keys())))
-            .order_by(MovieNightSession.created_at.desc()).limit(50).all()
+    if friends and not is_self:
+        recs_from_them = (
+            Recommendation.query
+            .filter_by(from_user_id=user_id, to_user_id=me_id)
+            .order_by(Recommendation.created_at.desc()).limit(50).all()
         )
-        nights = [{
-            "id": s.id,
-            "title": s.picked_title,
-            "year": s.picked_year,
-            "poster": s.picked_poster,
-            "media_type": s.picked_media_type,
-            "status": s.status,
-            "created_at": s.created_at.isoformat() if s.created_at else None,
-            "my_rating": my_ratings.get(s.id),
-            "their_rating": their_ratings.get(s.id),
-        } for s in sessions]
+        recs_to_them = (
+            Recommendation.query
+            .filter_by(from_user_id=me_id, to_user_id=user_id)
+            .order_by(Recommendation.created_at.desc()).limit(50).all()
+        )
+        reviews_from_them = (
+            ReviewShare.query
+            .filter_by(from_user_id=user_id, to_user_id=me_id)
+            .order_by(ReviewShare.created_at.desc()).limit(50).all()
+        )
+        reviews_to_them = (
+            ReviewShare.query
+            .filter_by(from_user_id=me_id, to_user_id=user_id)
+            .order_by(ReviewShare.created_at.desc()).limit(50).all()
+        )
+
+        # Movie nights where BOTH of us were participants
+        from models import MovieNightSession, MovieNightParticipant
+        my_sessions = {
+            p.session_id
+            for p in MovieNightParticipant.query.filter_by(user_id=me_id).all()
+        }
+        shared_parts = (
+            MovieNightParticipant.query
+            .filter(
+                MovieNightParticipant.user_id == user_id,
+                MovieNightParticipant.session_id.in_(my_sessions),
+            ).all()
+            if my_sessions else []
+        )
+        if shared_parts:
+            their_ratings = {p.session_id: p.rating for p in shared_parts}
+            my_parts = MovieNightParticipant.query.filter(
+                MovieNightParticipant.user_id == me_id,
+                MovieNightParticipant.session_id.in_(list(their_ratings.keys())),
+            ).all()
+            my_ratings = {p.session_id: p.rating for p in my_parts}
+            sessions = (
+                MovieNightSession.query
+                .filter(MovieNightSession.id.in_(list(their_ratings.keys())))
+                .order_by(MovieNightSession.created_at.desc()).limit(50).all()
+            )
+            nights = [{
+                "id": s.id,
+                "title": s.picked_title,
+                "year": s.picked_year,
+                "poster": s.picked_poster,
+                "media_type": s.picked_media_type,
+                "status": s.status,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+                "my_rating": my_ratings.get(s.id),
+                "their_rating": their_ratings.get(s.id),
+            } for s in sessions]
 
     # Their recent additions — but a 'private' friend's shelf stays private.
     # Mutual exchanges (recs/reviews/nights) always show: both parties own those.
@@ -402,6 +466,7 @@ def friend_activity(user_id):
 
     return jsonify({
         "user": user_summary(friend),
+        "profile": profile_summary(friend, me_id),
         "is_private": is_private,
         "recs_from_them": [rec_to_dict(r) for r in recs_from_them],
         "recs_to_them": [rec_to_dict(r) for r in recs_to_them],

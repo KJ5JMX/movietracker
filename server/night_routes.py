@@ -238,11 +238,6 @@ def roll():
     me = User.query.get(me_id)
     if not me:
         return jsonify({"message": "User not found"}), 404
-    if len(user_ids) > 1 and not me.is_pro:
-        return jsonify({
-            "message": "Movie Night with friends is a Pro feature",
-            "code": "pro_required",
-        }), 402
 
     media_type, max_runtime, mood, err = _parse_filters(data)
     if err:
@@ -317,6 +312,34 @@ def _fmt_when(dt):
     return dt.strftime("%a %b %-d, %-I:%M %p")
 
 
+FREE_NIGHTS_PER_MONTH = 4
+
+
+def _night_cap_hit(me):
+    """True when a FREE user has already hosted the monthly Movie Night limit.
+    Counts nights this user hosted (scheduled or rolled) since the 1st of the
+    current UTC month; a converted schedule reuses its row so it isn't
+    double-counted. Pro is unlimited."""
+    if not me or me.is_pro:
+        return False
+    now = datetime.utcnow()
+    start = datetime(now.year, now.month, 1)
+    count = MovieNightSession.query.filter(
+        MovieNightSession.host_user_id == me.id,
+        MovieNightSession.created_at >= start,
+    ).count()
+    return count >= FREE_NIGHTS_PER_MONTH
+
+
+def _night_cap_response():
+    return jsonify({
+        "message": "Free accounts get 4 Movie Nights a month. Go Pro for unlimited.",
+        "code": "limit_reached",
+        "limit": "movie_nights",
+        "cap": FREE_NIGHTS_PER_MONTH,
+    }), 402
+
+
 @night_bp.route("/schedule", methods=["POST"])
 @jwt_required()
 def schedule_night():
@@ -331,11 +354,6 @@ def schedule_night():
     user_ids, err = _validate_participants(me_id, data.get("participant_ids") or [])
     if err:
         return jsonify({"message": err}), 400
-    if len(user_ids) > 1 and not me.is_pro:
-        return jsonify({
-            "message": "Movie Night with friends is a Pro feature",
-            "code": "pro_required",
-        }), 402
 
     raw = data.get("scheduled_for")
     try:
@@ -347,6 +365,9 @@ def schedule_night():
         scheduled_for = scheduled_for.astimezone(timezone.utc).replace(tzinfo=None)
     if scheduled_for <= datetime.utcnow():
         return jsonify({"message": "scheduled_for must be in the future"}), 400
+
+    if _night_cap_hit(me):
+        return _night_cap_response()
 
     session = MovieNightSession(
         host_user_id=me_id,
@@ -387,11 +408,6 @@ def create_session():
         return jsonify({"message": err}), 400
 
     # Solo is free; a session that includes friends is Pro.
-    if len(user_ids) > 1 and not me.is_pro:
-        return jsonify({
-            "message": "Movie Night with friends is a Pro feature",
-            "code": "pro_required",
-        }), 402
 
     imdb_id = data.get("picked_imdb_id")
     title = data.get("picked_title")
@@ -427,6 +443,9 @@ def create_session():
                    f"{host_name} picked: {title}",
                    category="movie_nights")
             return jsonify(_serialize_session(existing, me_id)), 200
+
+    if _night_cap_hit(me):
+        return _night_cap_response()
 
     session = MovieNightSession(
         host_user_id=me_id,
@@ -543,11 +562,6 @@ def edit_scheduled_night(session_id):
         user_ids, err = _validate_participants(me_id, data.get("participant_ids") or [])
         if err:
             return jsonify({"message": err}), 400
-        if len(user_ids) > 1 and not me.is_pro:
-            return jsonify({
-                "message": "Movie Night with friends requires Pro",
-                "code": "pro_required",
-            }), 402
         MovieNightParticipant.query.filter_by(session_id=session.id).delete(
             synchronize_session=False
         )
