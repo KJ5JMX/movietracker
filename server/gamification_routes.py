@@ -30,6 +30,7 @@ def get_catalog():
 
 
 def _progress_dict(user_id):
+    from models import WatchlistItem
     user = User.query.get(user_id)
     metrics = compute_metrics(user_id)
     earned = {
@@ -77,6 +78,15 @@ def _progress_dict(user_id):
         "owned_avatars": owned_avatars,
         "metrics": metrics,
         "ladders": ladders,
+        "watched_count": WatchlistItem.query.filter_by(
+            user_id=user_id, watch_status="watched"
+        ).count(),
+        "rated_count": WatchlistItem.query.filter(
+            WatchlistItem.user_id == user_id,
+            WatchlistItem.rating.isnot(None),
+            WatchlistItem.rating > 0,
+        ).count(),
+        "member_since": user.created_at.year if user.created_at else None,
     }
 
 
