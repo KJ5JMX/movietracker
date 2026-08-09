@@ -102,6 +102,7 @@ def _item_to_feed_dict(item, reason, reason_user=None, kind="activity"):
         "movie_type": item.movie_type,
         "genre": item.genre,
         "rating": item.rating,
+        "review": item.notes,
         "runtime_minutes": item.runtime_minutes,
         "released": item.released,
         # Snapshot fields that AddItemScreen needs if user taps "Add to my list"

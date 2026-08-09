@@ -293,6 +293,75 @@ def add_to_watchlist():
     return jsonify(item_to_dict(new_item)), 201
 
 
+@watchlist_bp.route("/rate", methods=["POST"])
+@jwt_required()
+def rate_watchlist():
+    """One-shot rate-and-save, used by the Discovery quick-rate flow. Upserts by
+    (imdb_id, media_type): updates the existing item if you already have it, or
+    creates it as 'watched' with the rating/review if you don't. Either way the
+    result is a watched item carrying your rating + notes, which the feed then
+    surfaces to friends."""
+    user_id = int(get_jwt_identity())
+    data = request.get_json(silent=True) or {}
+
+    imdb_id = data.get("imdb_id")
+    if not imdb_id:
+        return jsonify({"message": "imdb_id is required"}), 400
+    media_type = data.get("media_type", "movie")
+    if media_type not in ALLOWED_MEDIA_TYPES:
+        return jsonify({"message": f"Invalid media_type: {media_type}"}), 400
+
+    rating = data.get("rating")
+    notes = data.get("notes")
+
+    existing = WatchlistItem.query.filter_by(
+        user_id=user_id, imdb_id=imdb_id, media_type=media_type
+    ).first()
+    if existing:
+        if rating is not None:
+            existing.rating = rating
+        if notes is not None:
+            existing.notes = notes
+        existing.watch_status = "watched"
+        db.session.commit()
+        sync_and_notify(user_id)
+        return jsonify(item_to_dict(existing)), 200
+
+    title = (data.get("title") or "").strip()
+    if not title:
+        return jsonify({"message": "title is required"}), 400
+
+    _me = User.query.get(user_id)
+    if _me and not _me.is_pro and WatchlistItem.query.filter_by(user_id=user_id).count() >= 250:
+        return jsonify({
+            "message": "You've hit the 250-title free limit. Remove some, or go Pro for unlimited.",
+            "code": "limit_reached",
+            "limit": "titles",
+            "cap": 250,
+        }), 402
+
+    new_item = WatchlistItem(
+        title=title,
+        year=data.get("year"),
+        imdb_id=imdb_id,
+        movie_type=data.get("movie_type"),
+        media_type=media_type,
+        plot=data.get("plot"),
+        poster=data.get("poster"),
+        backdrop=data.get("backdrop") or _resolve_item_backdrop(imdb_id, media_type),
+        genre=data.get("genre"),
+        imdb_rating=data.get("imdb_rating"),
+        watch_status="watched",
+        rating=rating,
+        notes=notes,
+        user_id=user_id,
+    )
+    db.session.add(new_item)
+    db.session.commit()
+    sync_and_notify(user_id)
+    return jsonify(item_to_dict(new_item)), 201
+
+
 @watchlist_bp.route("/<int:item_id>", methods=["PATCH"])
 @jwt_required()
 def update_watchlist_item(item_id):
