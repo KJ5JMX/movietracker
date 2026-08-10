@@ -33,7 +33,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from config import Config
-from models import db, User
+from models import db, User, CoinLedger
 from auth_routes import user_to_dict
 
 
@@ -49,6 +49,14 @@ PRO_PRODUCT_IDS = {
     "com.thenobodyprojects.cuedup.pro.yearly",
 }
 EXPECTED_BUNDLE_ID = "com.thenobodyprojects.cuedup"
+
+# Consumable coin packs. product_id -> coins granted. Must match App Store
+# Connect and src/iap.ts.
+COIN_PRODUCT_IDS = {
+    "com.thenobodyprojects.cuedup.coins.1": 1,
+    "com.thenobodyprojects.cuedup.coins.3": 3,
+    "com.thenobodyprojects.cuedup.coins.5": 5,
+}
 
 
 def _verify_with_apple(receipt_b64):
@@ -177,3 +185,78 @@ def verify_receipt():
         "pro": user.is_pro,
         "expires_at": expires_at.isoformat(),
     }), 200
+
+
+@iap_bp.route("/verify-coins", methods=["POST"])
+@jwt_required()
+def verify_coins():
+    """Credit plot coins for consumable coin-pack purchases. The app sends the
+    App Store receipt; we verify with Apple, then credit each coin-pack
+    transaction we haven't already credited. Idempotent: a transaction id is
+    credited at most once across all accounts (CoinLedger ref), so re-sending
+    the receipt (or a shared receipt) never double-grants."""
+    user_id = int(get_jwt_identity())
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"message": "User not found"}), 404
+
+    if not Config.APPLE_SHARED_SECRET:
+        return jsonify({
+            "message": "Purchases aren't enabled on this server yet",
+            "code": "iap_not_configured",
+        }), 503
+
+    data_in = request.get_json(silent=True) or {}
+    receipt = data_in.get("receipt_data")
+    if not receipt or not isinstance(receipt, str):
+        return jsonify({"message": "receipt_data required"}), 400
+
+    data = _verify_with_apple(receipt)
+    if data is None:
+        return jsonify({"message": "Could not reach Apple, try again"}), 502
+    if data.get("status") != 0:
+        return jsonify({
+            "message": "Invalid receipt",
+            "apple_status": data.get("status"),
+        }), 400
+
+    bundle_id = (data.get("receipt") or {}).get("bundle_id")
+    if bundle_id != EXPECTED_BUNDLE_ID:
+        return jsonify({"message": "Receipt is for a different app"}), 400
+
+    # Consumables live in the receipt's in_app list; latest_receipt_info can
+    # also carry them. Merge and dedupe by transaction id.
+    txns = list((data.get("receipt") or {}).get("in_app") or [])
+    txns += list(data.get("latest_receipt_info") or [])
+
+    credited = 0
+    seen = set()
+    for t in txns:
+        pid = t.get("product_id")
+        per = COIN_PRODUCT_IDS.get(pid)
+        if not per:
+            continue
+        txid = t.get("transaction_id")
+        if not txid or txid in seen:
+            continue
+        seen.add(txid)
+        already = CoinLedger.query.filter_by(reason="purchase", ref=txid).first()
+        if already:
+            continue
+        qty = 1
+        try:
+            qty = max(1, int(t.get("quantity") or 1))
+        except (TypeError, ValueError):
+            qty = 1
+        amount = per * qty
+        user.coins = (user.coins or 0) + amount
+        db.session.add(CoinLedger(
+            user_id=user.id, delta=amount, reason="purchase", ref=txid,
+            balance_after=user.coins,
+        ))
+        credited += amount
+
+    if credited:
+        db.session.commit()
+
+    return jsonify({"ok": True, "credited": credited, "coins": user.coins or 0}), 200
