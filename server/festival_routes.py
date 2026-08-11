@@ -513,6 +513,14 @@ def admin_set_mow():
     )
 
     if existing:
+        # Reusing this row keeps its id, and completions are keyed on mow_id.
+        # If the pick genuinely changed, the old week's completions must go or
+        # every user inherits their previous rating -- which also hides the card
+        # on Lists, since that filters on `completed`.
+        if existing.imdb_id != imdb_id:
+            MovieOfWeekCompletion.query.filter_by(mow_id=existing.id).delete(
+                synchronize_session=False
+            )
         existing.imdb_id = imdb_id
         existing.title = title
         existing.year = data.get("year")
@@ -938,6 +946,7 @@ def admin_delete_pro_avatar(key):
 def admin_notify_pro_drop():
     """Ping every user that a fresh batch of pro avatars is live in the shop.
     Fire this after uploading a new drop."""
+    from push import notify
     notify(
         _all_user_ids(), "New avatars in the shop",
         "Fresh pro avatars just dropped. Grab yours with plot coins.",

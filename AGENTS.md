@@ -1,17 +1,28 @@
 # Bardo — Backend Runbook
 
-> Catch-up doc for getting Cued Up into testers' hands. Read `BackCLAUDE.md` (backend
-> deep dive) and `CuedUp/CLAUDE.md` (mobile deep dive) for full architecture. This file
-> is the live deployment plan and current state as of 2026-06-27.
+> Live deployment doc + current state for the Bardo backend. Read `BackCLAUDE.md` (backend
+> deep dive, may lag) and `CuedUp/CLAUDE.md` (mobile onboarding, kept current) for full
+> architecture. `AGENTS.md` here is a mirror of this file; update both together.
 
-## Current state (2026-07-22 · v1.6)
+## Current state (2026-08-10 · v2.0)
 
-**Where things stand:** app renamed to **Bardo** (user-facing only; internal ids stay
-`cuedup`). v1.6 is in TestFlight with one more build pending (Movie Night client fix).
-Pro model decided: **solo Movie Night free, friends + Discovery Pro**. Subscriptions are
-coded but **not live** — App Store Connect payment setup (Paid Apps agreement, banking/tax,
-create products, `APPLE_SHARED_SECRET`) is the next session. Admin panel gained a broadcast
-**Send Announcement** tool. Migration head is `a1b2c3d4e5f6`.
+**Where things stand:** the 2026-08 free/pro rework shipped. **Free is capped** (250 titles,
+3 collections, 4 hosted Movie Nights/month — 402 `limit_reached`), **Pro uncaps** and adds
+public Discovery (`/feed/public` + `privacy_mode="public"`, 402 `pro_required`), the Pro
+avatar shop, and **plot coins** (new `cosmetics_routes.py`: `/coins` balance + lazy Pro
+grants of 3-at-signup/1-a-month, `/pro-avatars` catalog + buy, `/coins/gift` → 30-day friend
+trial; every movement logged in `coin_ledger`). IAP verifies both the Pro sub
+(`/iap/verify-receipt`) and consumable coin packs (`/iap/verify-coins`,
+`cuedup.coins.{1,3,5}`). The friend Discovery feed (`/feed/`) is **free now**. TMDB fills in
+backdrops, budget/revenue, and TV season/episode data (`TMDB_API_KEY`, degrades gracefully);
+per-episode watched tracking landed. Book club chat is ungated with reactions + spoiler
+flags. "Movie of the Week" is now "Movie Week" in copy. Profile API serves stats + banner;
+social routes serve public/friend profile summaries. Admin panel: broadcast announcements +
+**pro-avatar upload/manage** (art stored base64 in DB, served as PNGs). App Store Connect
+info is filled out and the shared secret reportedly re-added to the box `.env` (not
+verifiable from the repo). **Migration head: `f7a2b3c4d5e6`** (new since last note:
+discussion spoiler/reactions, group backdrop cache, watchlist backdrop, **pro coin economy**,
+episodes watched, profile banner). In progress: Pro avatar art/catalog.
 
 The backend is **deployed and live** on the Ubuntu box in Docker, reached over the
 Cloudflare Tunnel at `https://cuedup-api.thenobodyprojects.com`. The runbook below
@@ -40,17 +51,20 @@ is the original bring-up procedure and still accurate; this section is the now.
 - **`server/.env` now needs:** `ADMIN_EMAILS` (comma-separated; the festival
   curator). Optional `ADMIN_TOKEN` for local curl. APNs keys still optional
   (push no-ops without them); achievement/festival pushes ride `push.notify`.
-- **iOS:** v1.6 in TestFlight Internal (bundle `com.thenobodyprojects.cuedup`,
-  release build points at the public backend). One more build pending (Movie Night fix).
+- **iOS:** v2.0 (build 1) — free/pro rework, coins, Discovery/profile redo (see
+  `CuedUp/CLAUDE.md` for the app side).
 - **Admin broadcast:** `POST /admin/api/notify/broadcast` (audience all/pro/free) sends a
   custom announcement via `push.notify` (category `announcements`: pushes + stores an
   in-app notification, not user-mutable).
-- **Pro gating:** `/feed/` is Pro; `/night/roll|schedule|sessions` 402 only when the night
-  includes friends (`len(user_ids) > 1`); solo is free; `/night/preview` open.
-- **Subscriptions not live:** IAP coded (`iap_routes.py`, products
-  `com.thenobodyprojects.cuedup.pro.{monthly,yearly}`). Pending: App Store Connect Paid Apps
-  agreement + banking/tax, create the "Bardo Pro" group + products, set `APPLE_SHARED_SECRET`
-  in `server/.env` (503 from `/iap/verify-receipt` until then).
+- **Pro gating:** caps → 402 `limit_reached` (`watchlist` 250, `groups` 3, `night` 4 hosted
+  nights/month); Pro-only → 402 `pro_required` (`/feed/public`, going public). `/feed/` and
+  `/night/preview` are open to all.
+- **IAP:** `iap_routes.py` verifies the Pro sub (`cuedup.pro.{monthly,yearly}`) and coin
+  packs (`cuedup.coins.{1,3,5}`, credited idempotently via `coin_ledger`). 503 until
+  `APPLE_SHARED_SECRET` is set on the box. Remaining launch check: sandbox-test a sub AND a
+  coin pack on a real device.
+- **`server/.env` optional keys:** `TMDB_API_KEY` (backdrops/financials/TV data; null fields
+  without it), `APPLE_SHARED_SECRET` (IAP), APNs keys (push no-ops without them).
 - **Android:** sideloadable debug-signed APK builds via `android/ &&
   ./gradlew assembleRelease`. Keep `@react-native-async-storage/async-storage`
   pinned to `1.24.0` (v3 needs an unpublished `storage-android` artifact).
@@ -75,20 +89,10 @@ Testing** ASAP. Apple Developer account was purchased 2026-06-03.
 
 - **Bundle ID:** `com.thenobodyprojects.cuedup`
 - **Backend public URL:** `https://cuedup-api.thenobodyprojects.com`
-- **TestFlight track:** Internal only (up to 100 team testers, no Apple review, no
-  privacy policy / screenshots required). This sidesteps the placeholder Apple/Google
-  sign-in buttons and placeholder legal pages, which would block External / App Store.
-
-## Code changes already made (in working tree, not committed)
-
-1. `CuedUp/ios/CuedUp.xcodeproj/project.pbxproj` — `PRODUCT_BUNDLE_IDENTIFIER` set to
-   `com.thenobodyprojects.cuedup` on both Debug and Release (was the RN default
-   `org.reactjs.native.example...`, which App Store Connect rejects).
-2. `CuedUp/src/config.ts` — backend auto-selects by build type: `localhost:5555` under
-   Metro (`__DEV__` true), `https://cuedup-api.thenobodyprojects.com` in release/
-   TestFlight builds. No manual flipping. `FORCE_BACKEND` const available to override.
-3. `CuedUp/ios/CuedUp/Info.plist` — added `ITSAppUsesNonExemptEncryption = false` to
-   skip the export-compliance prompt on every upload.
+- **TestFlight track:** Internal to date; public App Store submission is the next milestone.
+- **App config:** `CuedUp/src/config.ts` auto-selects backend by build type (`__DEV__` →
+  local, release → public URL; `FORCE_BACKEND` overrides).
+  `ITSAppUsesNonExemptEncryption=false` skips the export prompt.
 
 ## Runbook
 
