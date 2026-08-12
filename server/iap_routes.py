@@ -257,6 +257,18 @@ def verify_coins():
         credited += amount
 
     if credited:
-        db.session.commit()
+        from sqlalchemy.exc import IntegrityError
+        try:
+            db.session.commit()
+        except IntegrityError:
+            # The partial unique index on coin_ledger.ref (reason='purchase')
+            # fired, which means a concurrent request credited these same
+            # transactions first. Nothing to do: drop this write and report the
+            # balance that request already produced.
+            db.session.rollback()
+            user = User.query.get(user_id)
+            return jsonify({
+                "ok": True, "credited": 0, "coins": (user.coins or 0) if user else 0,
+            }), 200
 
     return jsonify({"ok": True, "credited": credited, "coins": user.coins or 0}), 200
