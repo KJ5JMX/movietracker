@@ -333,6 +333,65 @@ _TERMS_BODY = f"""
 """
 
 
+_SUPPORT_BODY = f"""
+  <span class="pill">SUPPORT</span>
+  <h1>{escape(APP_NAME)} Support</h1>
+  <p class="effective">Track movies, TV, music and books, and decide what to
+  watch with the people you actually watch things with.</p>
+
+  <h2>Get in touch</h2>
+  <p>Email <a href="mailto:{escape(CONTACT_EMAIL)}">{escape(CONTACT_EMAIL)}</a>.
+  A real person reads it. If something is broken, include your username and
+  which iPhone you are on so it can be reproduced.</p>
+
+  <hr>
+
+  <h2>Common questions</h2>
+
+  <h3>How do I add friends?</h3>
+  <p>Open Profile to find your friend code and QR code. Share either one, or
+  type a friend's code in to send them a request.</p>
+
+  <h3>What is free, and what is Pro?</h3>
+  <p>All of {escape(APP_NAME)} is usable for free, within limits: 250 titles in
+  your list, 3 collections, and 4 Movie Nights you host per month. Watching,
+  rating, recommending, book discussions and joining someone else's Movie Night
+  are unlimited.</p>
+  <p>{escape(APP_NAME)} Pro removes those limits and adds public Discovery,
+  character avatars, and a plot coin every month.</p>
+
+  <h3>What are plot coins?</h3>
+  <p>Plot coins buy character avatars in the shop. Pro members get three when
+  they subscribe and one each month, and anyone can buy coin packs. Avatars you
+  buy are yours permanently, including after they rotate out of the shop.</p>
+
+  <h3>How do I cancel Pro?</h3>
+  <p>Apple handles the billing, so cancelling happens on your device: open
+  Settings, tap your name, then Subscriptions, then {escape(APP_NAME)} Pro, then
+  Cancel Subscription. You keep Pro until the end of the period you already paid
+  for, and nothing you saved is deleted when it ends.</p>
+
+  <h3>I subscribed but Pro is not showing up.</h3>
+  <p>Open the upgrade screen and tap "Restore purchases" — that re-checks your
+  receipt with Apple. If it still does not unlock, email the address above and
+  mention the Apple ID email you purchased with.</p>
+
+  <h3>How do I delete my account?</h3>
+  <p>Settings, then Delete account. You confirm with your password, and it
+  removes your account and the data attached to it. This cannot be undone.</p>
+
+  <h3>Something is wrong with a title's poster or details.</h3>
+  <p>Title data comes from public catalogs and is occasionally wrong or missing.
+  Open the title and pull to refresh to re-fetch it. If it stays wrong, send the
+  title name and what is off about it.</p>
+
+  <hr>
+  <p class="muted">{escape(APP_NAME)} is a product of {escape(DEVELOPER)}.
+  See also our <a href="/privacy">Privacy Policy</a> and
+  <a href="/terms">Terms of Use</a>.</p>
+"""
+
+
 @legal_bp.route("/privacy", methods=["GET"])
 def privacy():
     return _page("Privacy Policy", _PRIVACY_BODY)
@@ -341,3 +400,8 @@ def privacy():
 @legal_bp.route("/terms", methods=["GET"])
 def terms():
     return _page("Terms of Use", _TERMS_BODY)
+
+
+@legal_bp.route("/support", methods=["GET"])
+def support():
+    return _page("Support", _SUPPORT_BODY)
