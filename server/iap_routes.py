@@ -81,18 +81,57 @@ def _verify_with_apple(receipt_b64):
 
 def _latest_pro_transaction(data):
     """Pick the Pro transaction with the latest expiry from Apple's response.
-    Returns (transaction_dict, expires_ms) or (None, 0)."""
+
+    Looks in latest_receipt_info first (where auto-renewables normally live),
+    then falls back to receipt.in_app -- sandbox in particular does not always
+    populate latest_receipt_info, and missing the subscription there made a
+    perfectly valid purchase look like it had no Pro transaction at all.
+
+    Returns (transaction_dict, expires_ms) or (None, 0).
+    """
     best, best_exp = None, 0
-    for t in data.get("latest_receipt_info") or []:
-        if t.get("product_id") not in PRO_PRODUCT_IDS:
-            continue
-        try:
-            exp = int(t.get("expires_date_ms") or 0)
-        except (TypeError, ValueError):
-            continue
-        if exp > best_exp:
-            best, best_exp = t, exp
+    sources = [
+        data.get("latest_receipt_info") or [],
+        (data.get("receipt") or {}).get("in_app") or [],
+    ]
+    for rows in sources:
+        for t in rows:
+            if t.get("product_id") not in PRO_PRODUCT_IDS:
+                continue
+            try:
+                exp = int(t.get("expires_date_ms") or 0)
+            except (TypeError, ValueError):
+                continue
+            if exp > best_exp:
+                best, best_exp = t, exp
+        if best is not None:
+            break  # found it in the preferred source
     return best, best_exp
+
+
+def _log_receipt_diagnostics(data):
+    """Print exactly what Apple said, so a failed verification is diagnosable
+    from `docker compose logs api` instead of guesswork."""
+    try:
+        lri = data.get("latest_receipt_info") or []
+        in_app = (data.get("receipt") or {}).get("in_app") or []
+        print(f"[iap][diag] apple_status={data.get('status')} "
+              f"env={data.get('environment')} "
+              f"latest_receipt_info={len(lri)} in_app={len(in_app)}")
+        for label, rows in (("lri", lri), ("in_app", in_app)):
+            for t in rows:
+                exp_ms = t.get("expires_date_ms")
+                try:
+                    exp_h = datetime.utcfromtimestamp(int(exp_ms) / 1000.0).isoformat() if exp_ms else None
+                except (TypeError, ValueError):
+                    exp_h = f"unparseable:{exp_ms!r}"
+                print(f"[iap][diag]   {label} product={t.get('product_id')!r} "
+                      f"expires_ms={exp_ms} expires_utc={exp_h} "
+                      f"trial={t.get('is_trial_period')} "
+                      f"orig_txn={t.get('original_transaction_id')}")
+        print(f"[iap][diag] server_utcnow={datetime.utcnow().isoformat()}")
+    except Exception as e:  # diagnostics must never break a purchase
+        print(f"[iap][diag] failed: {e}")
 
 
 def apply_expiry_if_lapsed(user):
@@ -139,8 +178,11 @@ def verify_receipt():
         print(f"[iap] bundle mismatch: {bundle_id}")
         return jsonify({"message": "Receipt is for a different app"}), 400
 
+    _log_receipt_diagnostics(data)
+
     txn, expires_ms = _latest_pro_transaction(data)
     if not txn:
+        print("[iap] no Pro transaction found in receipt")
         return jsonify({"message": "No Bardo Pro subscription in this receipt"}), 400
 
     original_txn_id = txn.get("original_transaction_id")
@@ -161,6 +203,8 @@ def verify_receipt():
 
     expires_at = datetime.utcfromtimestamp(expires_ms / 1000.0)
     now = datetime.utcnow()
+    print(f"[iap] user={user.id} expires_at={expires_at.isoformat()} "
+          f"now={now.isoformat()} active={expires_at > now}")
 
     if expires_at > now:
         # Comp (founding testers) is permanent: a real subscription never

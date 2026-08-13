@@ -323,6 +323,11 @@ def rate_watchlist():
         if notes is not None:
             existing.notes = notes
         existing.watch_status = "watched"
+        # Stamp the date, or this never appears in Wrapped: /wrapped/<year>
+        # filters on watched_at, and rating from Discovery is a real "I watched
+        # this" event just like flipping the status on the item itself.
+        if not existing.watched_at:
+            existing.watched_at = datetime.utcnow()
         db.session.commit()
         sync_and_notify(user_id)
         return jsonify(item_to_dict(existing)), 200
@@ -352,6 +357,7 @@ def rate_watchlist():
         genre=data.get("genre"),
         imdb_rating=data.get("imdb_rating"),
         watch_status="watched",
+        watched_at=datetime.utcnow(),
         rating=rating,
         notes=notes,
         user_id=user_id,
