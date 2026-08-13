@@ -196,10 +196,27 @@ def verify_receipt():
             User.id != user.id,
         ).first()
         if other:
-            return jsonify({
-                "message": "This subscription is already linked to another account",
-                "code": "subscription_linked_elsewhere",
-            }), 409
+            # Only refuse while that account still has LIVE entitlement from
+            # this subscription. Previously any past holder blocked it forever:
+            # the lapse branch below keeps apple_original_transaction_id set, so
+            # an account that cancelled months ago -- and is plainly free --
+            # permanently locked the subscription out of every other account,
+            # recoverable only by a manual script. Cancel-then-resubscribe-on-a-
+            # different-account is a normal thing real people do.
+            other_active = (
+                other.pro_status in ("paid", "trial")
+                and other.pro_expires_at is not None
+                and other.pro_expires_at > datetime.utcnow()
+            )
+            if other_active:
+                print(f"[iap] refused: txn {original_txn_id} active on user {other.id}")
+                return jsonify({
+                    "message": "This subscription is already linked to another account",
+                    "code": "subscription_linked_elsewhere",
+                }), 409
+            # Lapsed or comped over there -- release the stale claim.
+            print(f"[iap] releasing stale txn {original_txn_id} from user {other.id}")
+            other.apple_original_transaction_id = None
 
     expires_at = datetime.utcfromtimestamp(expires_ms / 1000.0)
     now = datetime.utcnow()
