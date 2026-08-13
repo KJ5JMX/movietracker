@@ -30,13 +30,17 @@ def _strip_data_uri(s):
     return s
 
 
-def pro_avatar_to_dict(a):
+def pro_avatar_to_dict(a, owned=False):
     return {
         "key": a.key,
         "name": a.name,
         "coin_price": a.coin_price,
         "artist_credit": a.artist_credit,
         "slot": a.slot,
+        "owned": bool(owned),
+        # False once it rotates out of the shop. Owners keep it forever; it just
+        # moves out of the current drop and can no longer be bought by anyone.
+        "in_shop": bool(a.is_active and a.slot is not None),
         # URLs the app loads directly; served by the routes below.
         "image_full_url": f"/pro-avatars/{a.key}/full.png",
         "image_head_url": f"/pro-avatars/{a.key}/head.png",
@@ -46,15 +50,42 @@ def pro_avatar_to_dict(a):
 @cosmetics_bp.route("/pro-avatars", methods=["GET"])
 @jwt_required()
 def list_pro_avatars():
-    """The revolving Pro shop: active avatars currently on a shelf (slot set),
-    ordered by slot then sort_order."""
-    avatars = (
+    """The revolving Pro shop, plus everything this user already owns.
+
+    Two groups come back in one list, distinguished by `in_shop`:
+      - the current drop (active + on a slot), buyable by anyone
+      - avatars this user owns, including ones since rotated out, so their
+        purchases never disappear from the shop screen
+
+    Retired avatars nobody owns are simply absent -- there is nothing to show
+    and nothing to buy.
+    """
+    uid = int(get_jwt_identity())
+    owned_keys = {
+        ua.avatar_key
+        for ua in UserAvatar.query.filter_by(user_id=uid).all()
+    }
+
+    in_shop = (
         ProAvatar.query
         .filter(ProAvatar.is_active.is_(True), ProAvatar.slot.isnot(None))
         .order_by(ProAvatar.slot.asc(), ProAvatar.sort_order.asc())
         .all()
     )
-    return jsonify([pro_avatar_to_dict(a) for a in avatars]), 200
+    shown = {a.key for a in in_shop}
+
+    owned_retired = []
+    if owned_keys:
+        owned_retired = (
+            ProAvatar.query
+            .filter(ProAvatar.key.in_(owned_keys), ProAvatar.key.notin_(shown or [""]))
+            .order_by(ProAvatar.sort_order.asc(), ProAvatar.id.asc())
+            .all()
+        )
+
+    out = [pro_avatar_to_dict(a, a.key in owned_keys) for a in in_shop]
+    out += [pro_avatar_to_dict(a, True) for a in owned_retired]
+    return jsonify(out), 200
 
 
 def _serve_image(key, which):
